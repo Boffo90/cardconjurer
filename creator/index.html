@@ -716,7 +716,7 @@
 							</select>
 						</div>
 						<div class='readable-background margin-bottom padding'>
-							<h5 class='padding margin-bottom input-description'>Batch render for Cardwright: load a card list (.json, e.g. an order exported from Volcan Proxies). Every Magic card with its exact print is rebuilt here like "Auto (from imported print)" does, and you get a .zip with the PNGs and a new list. Unzip it and import that list in Cardwright (Import → "Card list…"). Other cards keep their original image.</h5>
+							<h5 class='padding margin-bottom input-description'>Batch render for Cardwright: load a card list (.json, e.g. an order exported from Volcan Proxies). Every Magic card with its exact print is rebuilt here like "Auto (from imported print)" does, and you get a .zip with the PNGs and a new list. Unzip it and import that list in Cardwright (Import → "Card list…"). Other cards keep their original image. Scryfall's art is cut to the old art box, so borderless and full art cards keep the Scryfall image unless you put the full illustration at local_art/full/&lt;set&gt;/&lt;number&gt;.png (e.g. local_art/full/fca/31.png); any card with a full illustration there uses it.</h5>
 							<input id='batch-file' type='file' accept='.json' class='input margin-bottom' oninput='batchFileChosen(event);'>
 							<div class='input-grid margin-bottom'>
 								<button id='batch-start' class='input' onclick='startBatchRender();' disabled>Render batch</button>
