@@ -4119,7 +4119,8 @@ function writeText(textObject, targetContext) {
 						var setLineText = (card.bottomInfo.midLeft || textObject).text; //some frames (e.g. Invocations) have no midLeft line
 						var bottomTextSubstring = setLineText.substring(0, setLineText.indexOf('  {savex}')).replace('{elemidinfo-set}', document.querySelector('#info-set').value || '').replace('{elemidinfo-language}', document.querySelector('#info-language').value || '');
 						justifyWidth = lineContext.measureText(bottomTextSubstring).width;
-					} else if (word.includes('number') && wordToWrite.includes('/') && card.version != 'pokemon') {
+					} else if (word.includes('number') && wordToWrite.includes('/') && card.version != 'pokemon' && textObject.name != 'wizards') {
+						//spreads "123/281" to the width of the set line below it (not on copyright lines, where it never fits and shrinks away)
 						fillJustify = true;
 						wordToWrite = Array.from(wordToWrite).join(' ');
 					}
@@ -5069,7 +5070,7 @@ function customCopyrightObject(original, customText) {
 	}
 	// when the artist line ("Illus. ...") is drawn and its box overlaps this one, push this line below it
 	var artistObject = card.bottomInfo ? card.bottomInfo.top : null;
-	if (document.querySelector('#enableCollectorInfo').checked && document.querySelector('#info-artist').value != '' && artistObject && artistObject.text.includes('{elemidinfo-artist}')) {
+	if (document.querySelector('#enableCollectorInfo').checked && document.querySelector('#info-artist').value != '' && artistObject && artistObject.text.includes('{elemidinfo-artist}') && !artistObject.printPosition) {
 		var overlap = artistObject.y + (card.infoArtistY || 0) / 1407 + artistObject.height - original.y;
 		if (overlap > 0) {
 			copy.y += overlap;
@@ -5460,6 +5461,20 @@ function applyPrintCopyrightLines(print) {
 		delete copyrightField.dataset.edited; //back to the frame's default line
 	}
 }
+//Seventh Edition style frames: artist and copyright lines where the print has them (measured on printed cards).
+//Original 1997-2003 prints and modern reprints in the retro frame (30th Anniversary, Dominaria Remastered...) differ.
+var retroBottomLines = {
+	original: {artist: {y: 0.8988, size: 0.0225}, wizards: {y: 0.9283, size: 0.0115}},
+	reprint: {artist: {y: 0.8950, size: 0.0225}, wizards: {y: 0.9155, size: 0.0100}}
+};
+function placeRetroBottomLines(print) {
+	if (!card.bottomInfo || !card.bottomInfo.top || !card.bottomInfo.wizards || !['1993', '1997'].includes(print.frame)) {
+		return;
+	}
+	var lines = retroBottomLines[(print.released_at || '') >= '2015-01-01' ? 'reprint' : 'original'];
+	card.bottomInfo.top = Object.assign({}, card.bottomInfo.top, {y: lines.artist.y, size: lines.artist.size, height: lines.artist.size, printPosition: true});
+	card.bottomInfo.wizards = Object.assign({}, card.bottomInfo.wizards, {y: lines.wizards.y, size: lines.wizards.size, height: lines.wizards.size});
+}
 //Retro frame lands whose only text is one line (e.g. "({T}: Add {B} or {R}.)" on dual lands) have it centered
 function centerRetroLandText(print) {
 	var rules = card.text.rules;
@@ -5558,6 +5573,9 @@ async function changeCardIndex() {
 		}
 		//start from empty text boxes, so nothing from the previous card stays behind in boxes this print doesn't use
 		Object.values(card.text).forEach(textBox => textBox.text = '');
+		if (printPlan.style == 'Seventh') {
+			placeRetroBottomLines(cardToImport);
+		}
 	}
 	//text
 	var langFontCode = "";
