@@ -5465,15 +5465,74 @@ function applyPrintCopyrightLines(print) {
 //Original 1997-2003 prints and modern reprints in the retro frame (30th Anniversary, Dominaria Remastered...) differ.
 var retroBottomLines = {
 	original: {artist: {y: 0.8988, size: 0.0225}, wizards: {y: 0.9283, size: 0.0115}},
-	reprint: {artist: {y: 0.8950, size: 0.0225}, wizards: {y: 0.9155, size: 0.0100}}
+	reprint: {artist: {y: 0.8986, size: 0.0285}, wizards: {y: 0.9278, size: 0.0165}}
 };
 function placeRetroBottomLines(print) {
 	if (!card.bottomInfo || !card.bottomInfo.top || !card.bottomInfo.wizards || !['1993', '1997'].includes(print.frame)) {
 		return;
 	}
-	var lines = retroBottomLines[(print.released_at || '') >= '2015-01-01' ? 'reprint' : 'original'];
+	var reprint = (print.released_at || '') >= '2015-01-01';
+	var lines = retroBottomLines[reprint ? 'reprint' : 'original'];
 	card.bottomInfo.top = Object.assign({}, card.bottomInfo.top, {y: lines.artist.y, size: lines.artist.size, height: lines.artist.size, printPosition: true});
 	card.bottomInfo.wizards = Object.assign({}, card.bottomInfo.wizards, {y: lines.wizards.y, size: lines.wizards.size, height: lines.wizards.size});
+	if (reprint) {
+		card.bottomInfo.wizards.text = card.bottomInfo.wizards.text.replace(', Inc.', ''); //modern reprints print "Wizards of the Coast 570"
+	}
+}
+//30th Anniversary Edition retro frame cards show a "30th Edition" wordmark where the set symbol goes: draw one in gold
+var thirtiethEditionBounds = {x: 0.789, y: 0.557, width: 0.132}; //measured on printed cards
+async function thirtiethEditionSymbol() {
+	await document.fonts.load('100px matrixb');
+	var canvas = document.createElement('canvas');
+	canvas.width = 880; //same proportions as the printed wordmark: 13.2% of the card's width by 3.6% of its height
+	canvas.height = 336;
+	var context = canvas.getContext('2d');
+	var gold = context.createLinearGradient(0, 0, 0, canvas.height);
+	gold.addColorStop(0, '#d2bd7c');
+	gold.addColorStop(0.5, '#a3864a');
+	gold.addColorStop(1, '#6c5426');
+	context.fillStyle = gold;
+	context.strokeStyle = 'rgba(40, 26, 8, 0.8)';
+	context.lineWidth = 4;
+	context.lineJoin = 'round';
+	context.textBaseline = 'alphabetic';
+	context.globalAlpha = 0.9;
+	//letters drawn stretched sideways, like the printed wordmark
+	var write = (text, size, x, y, stretch) => {
+		context.save();
+		context.font = size + 'px matrixb';
+		context.translate(x, y);
+		context.scale(stretch, 1);
+		context.strokeText(text, 0, 0);
+		context.fillText(text, 0, 0);
+		context.restore();
+		context.font = size + 'px matrixb';
+		return context.measureText(text).width * stretch;
+	};
+	var measure = (text, size, stretch) => {
+		context.font = size + 'px matrixb';
+		return context.measureText(text).width * stretch;
+	};
+	//"30" with a raised "TH" on top, "EDITION" filling the width below
+	var firstLineWidth = measure('30', 170, 1.2) + 8 + measure('TH', 84, 1.2);
+	var firstLineX = (canvas.width - firstLineWidth) / 2;
+	var thirtyWidth = write('30', 170, firstLineX, 152, 1.2);
+	write('TH', 84, firstLineX + thirtyWidth + 8, 82, 1.2);
+	var editionStretch = (canvas.width - 12) / measure('EDITION', 150, 1);
+	write('EDITION', 150, 6, 318, editionStretch);
+	return canvas.toDataURL();
+}
+//Puts the wordmark where printed cards have it (wider than the usual set symbol area)
+async function placeThirtiethEditionSymbol() {
+	var symbolSource = await thirtiethEditionSymbol();
+	setSymbol.onload = function() {
+		document.querySelector('#setSymbol-x').value = Math.round(scaleX(thirtiethEditionBounds.x) - scaleWidth(card.marginX));
+		document.querySelector('#setSymbol-y').value = Math.round(scaleY(thirtiethEditionBounds.y) - scaleHeight(card.marginY));
+		document.querySelector('#setSymbol-zoom').value = (scaleWidth(thirtiethEditionBounds.width) / setSymbol.width * 100).toFixed(1);
+		setSymbolEdited();
+		setSymbol.onload = setSymbolEdited;
+	};
+	setSymbol.src = symbolSource;
 }
 //Retro frame lands whose only text is one line (e.g. "({T}: Add {B} or {R}.)" on dual lands) have it centered
 function centerRetroLandText(print) {
@@ -5822,7 +5881,11 @@ async function changeCardIndex() {
 	}
 	document.querySelector('#set-symbol-rarity').value = cardToImport.rarity.slice(0, 1);
 	if (!document.querySelector('#lockSetSymbolURL').checked) {
-		fetchSetSymbol();
+		if (replicatePrint && printSet == '30a' && ['1993', '1997'].includes(cardToImport.frame)) {
+			await placeThirtiethEditionSymbol();
+		} else {
+			fetchSetSymbol();
+		}
 	}
 }
 function loadAvailableCards(cardKeys = JSON.parse(localStorage.getItem('cardKeys'))) {
