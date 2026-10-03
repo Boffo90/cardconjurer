@@ -716,6 +716,15 @@
 							</select>
 						</div>
 						<div class='readable-background margin-bottom padding'>
+							<h5 class='padding margin-bottom input-description'>Batch render for Cardwright: load a card list (.json, e.g. an order exported from Volcan Proxies). Every Magic card with its exact print is rebuilt here like "Auto (from imported print)" does, and you get a .zip with the PNGs and a new list. Unzip it and import that list in Cardwright (Import → "Card list…"). Other cards keep their original image.</h5>
+							<input id='batch-file' type='file' accept='.json' class='input margin-bottom' oninput='batchFileChosen(event);'>
+							<div class='input-grid margin-bottom'>
+								<button id='batch-start' class='input' onclick='startBatchRender();' disabled>Render batch</button>
+								<button id='batch-stop' class='input' onclick='stopBatchRender();' disabled>Stop</button>
+							</div>
+							<h5 id='batch-status' class='padding input-description'>No list loaded.</h5>
+						</div>
+						<div class='readable-background margin-bottom padding'>
 							<h5 class='padding margin-bottom input-description'>Save your current card</h5>
 							<button class='input margin-bottom' onclick='saveCard();'>Save Card</button>
 							<h5 class='padding margin-bottom input-description'>Load a saved card</h5>
