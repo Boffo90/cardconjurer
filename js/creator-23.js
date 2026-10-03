@@ -6334,6 +6334,277 @@ function toggleHighRes() {
 	drawCard();
 }
 
+//BATCH RENDER (card lists for Cardwright)
+//A "cardwright-list" file (see Cardwright's cardlist.py, e.g. an order exported from Volcan Proxies) names one image per card.
+//Cards that also carry their exact Scryfall print ({print: {source: 'scryfall', id, set, number, lang}}) are rebuilt here
+//with "Auto (from imported print)", and a zip comes out with the PNGs plus the same list pointing at them.
+var batchList = null;
+var batchStopRequested = false;
+var batchRunning = false;
+function batchStatus(text) {
+	document.querySelector('#batch-status').textContent = text;
+}
+function batchPrintOf(entry) {
+	var print = entry && entry.print;
+	if (print && print.source == 'scryfall' && (print.id || (print.set && print.number))) {
+		return print;
+	}
+	//lists without the print (e.g. exported before it existed): a Scryfall image is named after its card id,
+	//"https://cards.scryfall.io/png/front/c/d/<card id>.png", which is the exact print too
+	var scryfallImage = typeof (entry && entry.image) == 'string' ? entry.image.match(/^https:\/\/cards\.scryfall\.io\/[a-z_]+\/(?:front|back)\/[0-9a-f]\/[0-9a-f]\/([0-9a-f-]{36})\.(?:png|jpg)/i) : null;
+	return scryfallImage ? {source: 'scryfall', id: scryfallImage[1].toLowerCase()} : null;
+}
+function batchFileChosen(event) {
+	var file = event.target.files[0];
+	batchList = null;
+	document.querySelector('#batch-start').disabled = true;
+	if (!file) {
+		batchStatus('No list loaded.');
+		return;
+	}
+	file.text().then(text => {
+		var list;
+		try {
+			list = JSON.parse(text);
+		} catch (error) {
+			batchStatus('That file is not JSON: ' + error.message);
+			return;
+		}
+		if (!list || !Array.isArray(list.cards) || (list.format && list.format != 'cardwright-list')) {
+			batchStatus('That file is not a card list (format "cardwright-list" with a "cards" list).');
+			return;
+		}
+		batchList = list;
+		var toRender = list.cards.filter(batchPrintOf).length;
+		batchStatus(`${list.name || file.name}: ${list.cards.length} card(s), ${toRender} with their exact Magic print to rebuild here. The rest keep their image.`);
+		document.querySelector('#batch-start').disabled = toRender == 0;
+	});
+}
+function stopBatchRender() {
+	batchStopRequested = true;
+	batchStatus('Stopping after the current card…');
+}
+//Layouts printed on two physical faces: both get rendered, the second one as the card's back
+var batchDoubleFacedLayouts = ['transform', 'modal_dfc', 'double_faced_token', 'reversible_card'];
+async function batchFetchPrint(print) {
+	var url = print.id ? 'https://api.scryfall.com/cards/' + encodeURIComponent(print.id)
+		: `https://api.scryfall.com/cards/${encodeURIComponent(print.set)}/${encodeURIComponent(print.number)}` + (print.lang && print.lang != 'en' ? '/' + encodeURIComponent(print.lang) : '');
+	var response = await fetch(url);
+	if (!response.ok) {
+		throw new Error('Scryfall answered ' + response.status);
+	}
+	return response.json();
+}
+//Waits until the imported card is fully drawn: its art, frames and set symbol loaded, and the delayed redraws done
+async function batchWaitForCard(previousArtSource) {
+	var wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+	var start = Date.now();
+	//the art comes from a second Scryfall search, after the text
+	while (Date.now() - start < 20000 && !(art.complete && (art.src != previousArtSource || Date.now() - start > 6000))) {
+		await wait(150);
+	}
+	await wait(1300); //text and the auto frame are redrawn half a second after each change
+	var imagesReady = () => art.complete && setSymbol.complete && card.frames.every(frame => (!frame.image || frame.image.complete) && (frame.masks || []).every(mask => !mask.image || mask.image.complete));
+	while (Date.now() - start < 25000 && !imagesReady()) {
+		await wait(150);
+	}
+	await drawText();
+	await bottomInfoEdited();
+	drawFrames();
+	drawCard();
+	await wait(300);
+}
+async function batchRenderFace(faces, faceIndex) {
+	var previousArtSource = art.src;
+	scryfallCard = faces;
+	var importIndex = document.querySelector('#import-index');
+	importIndex.innerHTML = '';
+	faces.forEach((face, index) => {
+		var option = document.createElement('option');
+		option.value = index;
+		option.textContent = face.name;
+		importIndex.appendChild(option);
+	});
+	importIndex.value = faceIndex;
+	await changeCardIndex();
+	await batchWaitForCard(previousArtSource);
+	var blob = await new Promise(resolve => cardCanvas.toBlob(resolve, 'image/png'));
+	return new Uint8Array(await blob.arrayBuffer());
+}
+function batchFileName(index, name, suffix = '') {
+	var safe = (name || 'card').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+	return `cards/${String(index + 1).padStart(3, '0')}-${safe || 'card'}${suffix}.png`;
+}
+async function startBatchRender() {
+	if (!batchList || batchRunning) {
+		return;
+	}
+	batchRunning = true;
+	batchStopRequested = false;
+	document.querySelector('#batch-start').disabled = true;
+	document.querySelector('#batch-stop').disabled = false;
+	//replicate prints, with their collector info, while the batch runs
+	var autoFrameSelect = document.querySelector('#autoFrame');
+	var collectorCheckbox = document.querySelector('#enableCollectorInfo');
+	var previousAutoFrame = autoFrameSelect.value;
+	var previousCollector = collectorCheckbox.checked;
+	autoFrameSelect.value = 'FromPrint';
+	setAutoFrame();
+	collectorCheckbox.checked = true;
+	enableCollectorInfo();
+	//the auto frame's notices (approximated or unsupported frames) go in the report
+	var realNotify = notify;
+	var cardNotices = [];
+	notify = function(message, seconds) {
+		var text = String(message).replace(/<[^>]+>/g, '');
+		if (text.startsWith('Auto frame:')) {
+			cardNotices.push(text);
+		}
+		return realNotify(message, seconds);
+	};
+
+	var files = [];
+	var report = [];
+	var rendered = new Map(); //print -> {image, back}: a print ordered twice (two finishes) is rendered once
+	var cards = batchList.cards.map(entry => Object.assign({}, entry));
+	var total = cards.filter(batchPrintOf).length;
+	var done = 0;
+	try {
+		for (var index = 0; index < cards.length && !batchStopRequested; index ++) {
+			var entry = cards[index];
+			var print = batchPrintOf(entry);
+			if (!print) {
+				continue;
+			}
+			var key = print.id || `${print.set}/${print.number}/${print.lang || 'en'}`;
+			batchStatus(`Rendering ${done + 1} of ${total}: ${entry.name}…`);
+			try {
+				if (!rendered.has(key)) {
+					cardNotices = [];
+					var scryfallObject = await batchFetchPrint(print);
+					var faces = [];
+					processScryfallCard(scryfallObject, faces);
+					var front = await batchRenderFace(faces, 0);
+					var result = {image: batchFileName(index, entry.name)};
+					files.push({name: result.image, data: front});
+					if (batchDoubleFacedLayouts.includes(scryfallObject.layout) && faces.length > 1 && !batchStopRequested) {
+						var back = await batchRenderFace(faces, 1);
+						result.back = batchFileName(index, entry.name, '-back');
+						files.push({name: result.back, data: back});
+					}
+					if (cardNotices.length) {
+						report.push(`${entry.name}: ${[...new Set(cardNotices)].join(' ')}`);
+					}
+					rendered.set(key, result);
+				}
+				var result = rendered.get(key);
+				entry.image = result.image;
+				if (result.back) {
+					entry.back = result.back;
+				}
+				entry.rendered = 'cardconjurer';
+			} catch (error) {
+				report.push(`${entry.name}: could not be rebuilt (${error.message}), it keeps its original image.`);
+			}
+			done ++;
+		}
+	} finally {
+		notify = realNotify;
+		autoFrameSelect.value = previousAutoFrame;
+		localStorage.setItem('autoFrame', previousAutoFrame);
+		collectorCheckbox.checked = previousCollector;
+		enableCollectorInfo();
+		batchRunning = false;
+		document.querySelector('#batch-stop').disabled = true;
+		document.querySelector('#batch-start').disabled = false;
+	}
+
+	var list = Object.assign({}, batchList, {format: 'cardwright-list', version: batchList.version || 1, cards: cards});
+	var encoder = new TextEncoder();
+	files.push({name: 'cardwright-list.json', data: encoder.encode(JSON.stringify(list, null, 2))});
+	if (report.length) {
+		files.push({name: 'report.txt', data: encoder.encode(report.join('\r\n'))});
+	}
+	var zipName = (batchList.name || 'batch').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-cardconjurer.zip';
+	var link = document.createElement('a');
+	link.href = URL.createObjectURL(new Blob([makeZip(files)], {type: 'application/zip'}));
+	link.download = zipName;
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	setTimeout(() => URL.revokeObjectURL(link.href), 60000);
+	var renderedCount = files.filter(file => file.name.startsWith('cards/')).length;
+	batchStatus(`${batchStopRequested ? 'Stopped. ' : ''}${done} of ${total} card(s) done, ${renderedCount} image(s) in ${zipName}.` + (report.length ? ` ${report.length} note(s) in report.txt.` : '') + ' Unzip it and import cardwright-list.json in Cardwright (Import → "Card list…").');
+}
+//Minimal zip writer ("stored", no compression: PNGs are already compressed)
+var crcTable = null;
+function crc32(bytes) {
+	if (!crcTable) {
+		crcTable = new Uint32Array(256);
+		for (var n = 0; n < 256; n ++) {
+			var c = n;
+			for (var k = 0; k < 8; k ++) {
+				c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1;
+			}
+			crcTable[n] = c >>> 0;
+		}
+	}
+	var crc = 0xFFFFFFFF;
+	for (var i = 0; i < bytes.length; i ++) {
+		crc = crcTable[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+	}
+	return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+function makeZip(files) {
+	var encoder = new TextEncoder();
+	var now = new Date();
+	var dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+	var dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+	var parts = [];
+	var central = [];
+	var offset = 0;
+	for (var file of files) {
+		var name = encoder.encode(file.name);
+		var crc = crc32(file.data);
+		var local = new DataView(new ArrayBuffer(30));
+		local.setUint32(0, 0x04034b50, true);
+		local.setUint16(4, 20, true);
+		local.setUint16(6, 0x0800, true); //UTF-8 names
+		local.setUint16(8, 0, true); //stored
+		local.setUint16(10, dosTime, true);
+		local.setUint16(12, dosDate, true);
+		local.setUint32(14, crc, true);
+		local.setUint32(18, file.data.length, true);
+		local.setUint32(22, file.data.length, true);
+		local.setUint16(26, name.length, true);
+		local.setUint16(28, 0, true);
+		parts.push(local.buffer, name, file.data);
+		var entry = new DataView(new ArrayBuffer(46));
+		entry.setUint32(0, 0x02014b50, true);
+		entry.setUint16(4, 20, true);
+		entry.setUint16(6, 20, true);
+		entry.setUint16(8, 0x0800, true);
+		entry.setUint16(10, 0, true);
+		entry.setUint16(12, dosTime, true);
+		entry.setUint16(14, dosDate, true);
+		entry.setUint32(16, crc, true);
+		entry.setUint32(20, file.data.length, true);
+		entry.setUint32(24, file.data.length, true);
+		entry.setUint16(28, name.length, true);
+		entry.setUint32(42, offset, true);
+		central.push(entry.buffer, name);
+		offset += 30 + name.length + file.data.length;
+	}
+	var centralSize = central.reduce((size, part) => size + part.byteLength, 0);
+	var end = new DataView(new ArrayBuffer(22));
+	end.setUint32(0, 0x06054b50, true);
+	end.setUint16(8, files.length, true);
+	end.setUint16(10, files.length, true);
+	end.setUint32(12, centralSize, true);
+	end.setUint32(16, offset, true);
+	return new Blob([...parts, ...central, end.buffer]);
+}
+
 // INITIALIZATION
 
 // auto load frame version (user defaults)
