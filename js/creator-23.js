@@ -4607,11 +4607,45 @@ function artFromScryfall(scryfallResponse) {
 
 	changeArtIndex();
 }
+//Full illustrations you keep yourself: local_art/full/<set>/<number>.png (or .jpg/.webp; "<number>-back" for a back face).
+//Scryfall only has art cut to the classic art box, which ruins borderless and full art cards.
+var localFullArtCache = new Map();
+async function localFullArtSource(print) {
+	if (!print || !print.set || !print.collector_number) {
+		return null;
+	}
+	var base = `/local_art/full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}`;
+	if (!localFullArtCache.has(base)) {
+		var found = null;
+		for (var extension of ['png', 'jpg', 'jpeg', 'webp']) {
+			try {
+				if ((await fetch(`${base}.${extension}`, {method: 'HEAD'})).ok) {
+					found = `${base}.${extension}`;
+					break;
+				}
+			} catch (error) {}
+		}
+		localFullArtCache.set(base, found);
+	}
+	return localFullArtCache.get(base);
+}
+async function uploadPrintArt(artCrop) {
+	var print = autoFramePrint;
+	var local = await localFullArtSource(print);
+	uploadArt(local || artCrop, 'autoFit');
+	if (!local && print && (print.border_color == 'borderless' || print.full_art)) {
+		notify(`Auto frame: Scryfall only has this card's art cut to the old art box. For a clean rebuild, put the full illustration at local_art/full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png (or .jpg).`, 10);
+	}
+}
 function changeArtIndex() {
 	const artIndexValue = document.querySelector('#art-index').value;
 	if (artIndexValue != 0 || artIndexValue == '0') {
 		const scryfallCardForArt = scryfallArt[artIndexValue];
-		uploadArt(scryfallCardForArt.image_uris.art_crop, 'autoFit');
+		if (document.querySelector('#autoFrame').value == 'FromPrint' && autoFramePrint && scryfallCardForArt.illustration_id == autoFramePrint.illustration_id) {
+			uploadPrintArt(scryfallCardForArt.image_uris.art_crop); //your full illustration, when you have it
+		} else {
+			uploadArt(scryfallCardForArt.image_uris.art_crop, 'autoFit');
+		}
 		artistEdited(scryfallCardForArt.artist);
 		if (params.get('mtgpics') != null) {
 			imageURL(`https://www.mtgpics.com/pics/art/${scryfallCardForArt.set.toLowerCase()}/${("00" + scryfallCardForArt.collector_number).slice(-3)}.jpg`, tryMTGPicsArt);
@@ -6484,6 +6518,13 @@ async function startBatchRender() {
 					var scryfallObject = await batchFetchPrint(print);
 					var faces = [];
 					processScryfallCard(scryfallObject, faces);
+					//borderless and full art cards need the full illustration: Scryfall's art is cut to the old art box
+					if ((scryfallObject.border_color == 'borderless' || scryfallObject.full_art) && !(await localFullArtSource(faces[0]))) {
+						report.push(`${entry.name}: kept the Scryfall image (borderless/full art, and Scryfall's art is cut). To rebuild it, put the full illustration at local_art/full/${faces[0].set.toLowerCase()}/${faces[0].collector_number}.png`);
+						rendered.set(key, {kept: true});
+						done ++;
+						continue;
+					}
 					var front = await batchRenderFace(faces, 0);
 					var result = {image: batchFileName(index, entry.name)};
 					files.push({name: result.image, data: front});
@@ -6498,6 +6539,10 @@ async function startBatchRender() {
 					rendered.set(key, result);
 				}
 				var result = rendered.get(key);
+				if (result.kept) {
+					done ++;
+					continue; //keeps its original image
+				}
 				entry.image = result.image;
 				if (result.back) {
 					entry.back = result.back;
