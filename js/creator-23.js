@@ -5497,21 +5497,39 @@ function applyPrintCopyrightLines(print) {
 }
 //Seventh Edition style frames: artist and copyright lines where the print has them (measured on printed cards).
 //Original 1997-2003 prints and modern reprints in the retro frame (30th Anniversary, Dominaria Remastered...) differ.
-var retroBottomLines = {
-	original: {artist: {y: 0.8988, size: 0.0225}, wizards: {y: 0.9283, size: 0.0115}},
-	reprint: {artist: {y: 0.8986, size: 0.0285}, wizards: {y: 0.9278, size: 0.0165}}
-};
+//Measured on printed cards (Prophecy 45 from 2000 and 30th Anniversary 570 from 2022 match within a few thousandths)
+var retroBottomLines = {artist: {y: 0.8986, size: 0.0285}, wizards: {y: 0.9278, size: 0.0165}};
+//The copyright line of each era, as printed:
+//before Exodus (June 1998) "©1997 Wizards of the Coast, Inc." with no collector number, aligned left (Tempest, Stronghold);
+//then "©1993–1999 Wizards of the Coast, Inc. 2/350"; from Seventh Edition (April 2001) "™ & © 1993–2001 ... 3/350";
+//modern retro reprints "™ & © 2022 Wizards of the Coast 570"
+function retroCopyrightLine(print) {
+	var released = print.released_at || '';
+	if (released >= '2015-01-01') {
+		return {text: '™ & © {elemidinfo-year} Wizards of the Coast {elemidinfo-number}'};
+	}
+	if (released < '1998-06-01') {
+		return {text: '©{elemidinfo-year} Wizards of the Coast, Inc.', alignLeft: print.frame == '1997'};
+	}
+	var prefix = released >= '2001-04-01' ? '™ & © ' : '©';
+	return {text: prefix + '1993–{elemidinfo-year} Wizards of the Coast, Inc. {elemidinfo-number}'};
+}
 function placeRetroBottomLines(print) {
 	if (!card.bottomInfo || !card.bottomInfo.top || !card.bottomInfo.wizards || !['1993', '1997'].includes(print.frame)) {
 		return;
 	}
-	var reprint = (print.released_at || '') >= '2015-01-01';
-	var lines = retroBottomLines[reprint ? 'reprint' : 'original'];
-	card.bottomInfo.top = Object.assign({}, card.bottomInfo.top, {y: lines.artist.y, size: lines.artist.size, height: lines.artist.size, printPosition: true});
-	card.bottomInfo.wizards = Object.assign({}, card.bottomInfo.wizards, {y: lines.wizards.y, size: lines.wizards.size, height: lines.wizards.size});
-	if (reprint) {
-		card.bottomInfo.wizards.text = card.bottomInfo.wizards.text.replace(', Inc.', ''); //modern reprints print "Wizards of the Coast 570"
-	}
+	var lines = retroBottomLines;
+	var copyright = retroCopyrightLine(print);
+	//the frame's own alignment is kept aside: the frame isn't reloaded between two cards of the same style
+	var alignOf = line => copyright.alignLeft ? 'left' : line.defaultAlign;
+	var top = card.bottomInfo.top;
+	var wizards = card.bottomInfo.wizards;
+	var topDefault = 'defaultAlign' in top ? top.defaultAlign : top.align;
+	var wizardsDefault = 'defaultAlign' in wizards ? wizards.defaultAlign : wizards.align;
+	card.bottomInfo.top = Object.assign({}, top, {y: lines.artist.y, size: lines.artist.size, height: lines.artist.size, printPosition: true, defaultAlign: topDefault});
+	card.bottomInfo.top.align = alignOf(card.bottomInfo.top);
+	card.bottomInfo.wizards = Object.assign({}, wizards, {y: lines.wizards.y, size: lines.wizards.size, height: lines.wizards.size, text: copyright.text, defaultAlign: wizardsDefault});
+	card.bottomInfo.wizards.align = alignOf(card.bottomInfo.wizards);
 }
 //30th Anniversary Edition retro frame cards show the "30th Edition" logo where the set symbol goes
 var thirtiethEditionBounds = {x: 0.789, y: 0.557, width: 0.132}; //measured on printed cards
@@ -5832,13 +5850,15 @@ async function changeCardIndex() {
 					bottomInfoEdited();
 				} else if (setObject.printed_size) {
 					var number = document.querySelector('#info-number').value;
+					var printedSize = String(setObject.printed_size);
+					//old frames print "45/143"; later cards pad it, "045/264"
+					var unpadded = replicatePrint && ['1993', '1997'].includes(cardToImport.frame);
 
-					while (number.length < 3) {
+					while (number.length < 3 && !unpadded) {
 						number = '0' + number;
 					}
 
-					var printedSize = setObject.printed_size;
-					while (printedSize.length < 3) {
+					while (printedSize.length < 3 && !unpadded) {
 						printedSize = '0' + printedSize;
 					}
 
