@@ -5479,52 +5479,11 @@ function placeRetroBottomLines(print) {
 		card.bottomInfo.wizards.text = card.bottomInfo.wizards.text.replace(', Inc.', ''); //modern reprints print "Wizards of the Coast 570"
 	}
 }
-//30th Anniversary Edition retro frame cards show a "30th Edition" wordmark where the set symbol goes: draw one in gold
+//30th Anniversary Edition retro frame cards show the "30th Edition" logo where the set symbol goes
 var thirtiethEditionBounds = {x: 0.789, y: 0.557, width: 0.132}; //measured on printed cards
-async function thirtiethEditionSymbol() {
-	await document.fonts.load('100px matrixb');
-	var canvas = document.createElement('canvas');
-	canvas.width = 880; //same proportions as the printed wordmark: 13.2% of the card's width by 3.6% of its height
-	canvas.height = 336;
-	var context = canvas.getContext('2d');
-	var gold = context.createLinearGradient(0, 0, 0, canvas.height);
-	gold.addColorStop(0, '#d2bd7c');
-	gold.addColorStop(0.5, '#a3864a');
-	gold.addColorStop(1, '#6c5426');
-	context.fillStyle = gold;
-	context.strokeStyle = 'rgba(40, 26, 8, 0.8)';
-	context.lineWidth = 4;
-	context.lineJoin = 'round';
-	context.textBaseline = 'alphabetic';
-	context.globalAlpha = 0.9;
-	//letters drawn stretched sideways, like the printed wordmark
-	var write = (text, size, x, y, stretch) => {
-		context.save();
-		context.font = size + 'px matrixb';
-		context.translate(x, y);
-		context.scale(stretch, 1);
-		context.strokeText(text, 0, 0);
-		context.fillText(text, 0, 0);
-		context.restore();
-		context.font = size + 'px matrixb';
-		return context.measureText(text).width * stretch;
-	};
-	var measure = (text, size, stretch) => {
-		context.font = size + 'px matrixb';
-		return context.measureText(text).width * stretch;
-	};
-	//"30" with a raised "TH" on top, "EDITION" filling the width below
-	var firstLineWidth = measure('30', 170, 1.2) + 8 + measure('TH', 84, 1.2);
-	var firstLineX = (canvas.width - firstLineWidth) / 2;
-	var thirtyWidth = write('30', 170, firstLineX, 152, 1.2);
-	write('TH', 84, firstLineX + thirtyWidth + 8, 82, 1.2);
-	var editionStretch = (canvas.width - 12) / measure('EDITION', 150, 1);
-	write('EDITION', 150, 6, 318, editionStretch);
-	return canvas.toDataURL();
-}
 //Puts the wordmark where printed cards have it (wider than the usual set symbol area)
 async function placeThirtiethEditionSymbol() {
-	var symbolSource = await thirtiethEditionSymbol();
+	var symbolSource = fixUri('/img/setSymbols/custom/30a-retro.png');
 	setSymbol.onload = function() {
 		document.querySelector('#setSymbol-x').value = Math.round(scaleX(thirtiethEditionBounds.x) - scaleWidth(card.marginX));
 		document.querySelector('#setSymbol-y').value = Math.round(scaleY(thirtiethEditionBounds.y) - scaleHeight(card.marginY));
