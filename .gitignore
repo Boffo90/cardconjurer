@@ -16,6 +16,7 @@ dev/*
 /build
 /dist
 /.idea
+/.claude
 
 # misc
 .DS_Store

@@ -62,8 +62,14 @@ art.onload = artEdited;
 //set symbol
 setSymbol = new Image(); setSymbol.crossOrigin = 'anonymous'; setSymbol.src = blank.src;
 setSymbol.onerror = function() {
-	if (this.src.includes('gatherer.wizards.com')) {
-		notify('<a target="_blank" href="http' + this.src.split('http')[2] + '">Loading the set symbol from Gatherer failed. Please check this link to see if it exists. If it does, it may be necessary to manually download and upload the image.</a>', 5);
+	// a set that has no local symbol (e.g. a newer set): try Hexproof.io before giving up
+	var localSymbol = this.src.match(/\/img\/setSymbols\/official\/([^\/]+)-([^\/.-]+)\.\w+$/);
+	if (localSymbol) {
+		uploadSetSymbol('https://api.hexproof.io/symbols/set/' + localSymbol[1] + '/' + localSymbol[2], 'resetSetSymbol');
+		return;
+	}
+	if (this.src.includes('api.hexproof.io') || this.src.includes('svgs.scryfall.io')) {
+		notify('<a target="_blank" href="' + this.src + '">Loading the set symbol from ' + new URL(this.src).hostname + ' failed. Please check this link to see if it exists (try another source or rarity). If it does, it may be necessary to manually download and upload the image.</a>', 5);
 	}
 	if (!this.src.includes('/img/blank.png')) {this.src = fixUri('/img/blank.png');}
 }
@@ -754,13 +760,32 @@ function cardFrameProperties(colors, manaCost, typeLine, power, style) {
 	}
 }
 var autoFramePack;
+var autoFramePrint = null; //Scryfall object of the last imported print, used by the "Auto (from imported print)" option
+var autoFramePrintNotice = '';
 function autoFrame() {
 	var frame = document.querySelector('#autoFrame').value;
 	if (frame == 'false') { autoFramePack = null; return; }
 
+	var printStamp = null;
+	var printPlan = null;
+	if (frame == 'FromPrint') {
+		printPlan = autoFrameStyleFromPrint(autoFramePrint);
+		if (printPlan.notice && printPlan.notice != autoFramePrintNotice) {
+			notify(printPlan.notice, 8);
+		}
+		autoFramePrintNotice = printPlan.notice || '';
+		if (!printPlan.style && !printPlan.pack) { return; } //unsupported layout: leave the current frame alone
+		frame = printPlan.style;
+		printStamp = printPlan.stamp;
+	}
+	//some frame versions (sagas, planeswalkers, classes...) don't have every text box
+	var manaText = card.text.mana ? card.text.mana.text : '';
+	var typeText = card.text.type ? card.text.type.text : '';
+	var ptText = card.text.pt ? card.text.pt.text : '';
+
 	var colors = [];
-	if (card.text.type.text.toLowerCase().includes('land')) {
-		var rules = card.text.rules.text;
+	if (typeText.toLowerCase().includes('land')) {
+		var rules = card.text.rules ? card.text.rules.text : (card.text.ability0 ? card.text.ability0.text : '');
 		var flavorIndex = rules.indexOf('{flavor}');
 		if (flavorIndex == -1) {
 			flavorIndex = rules.indexOf('{oldflavor}');
@@ -788,19 +813,19 @@ function autoFrame() {
 			}
 		});
 
-		if (!colors.includes('W') && (rules.toLowerCase().includes('plains') || card.text.type.text.toLowerCase().includes('plains'))) {
+		if (!colors.includes('W') && (rules.toLowerCase().includes('plains') || typeText.toLowerCase().includes('plains'))) {
 			colors.push('W');
 		}
-		if (!colors.includes('U') && (rules.toLowerCase().includes('island') || card.text.type.text.toLowerCase().includes('island'))) {
+		if (!colors.includes('U') && (rules.toLowerCase().includes('island') || typeText.toLowerCase().includes('island'))) {
 			colors.push('U');
 		}
-		if (!colors.includes('B') && (rules.toLowerCase().includes('swamp') || card.text.type.text.toLowerCase().includes('swamp'))) {
+		if (!colors.includes('B') && (rules.toLowerCase().includes('swamp') || typeText.toLowerCase().includes('swamp'))) {
 			colors.push('B');
 		}
-		if (!colors.includes('R') && (rules.toLowerCase().includes('mountain') || card.text.type.text.toLowerCase().includes('mountain'))) {
+		if (!colors.includes('R') && (rules.toLowerCase().includes('mountain') || typeText.toLowerCase().includes('mountain'))) {
 			colors.push('R');
 		}
-		if (!colors.includes('G') && (rules.toLowerCase().includes('forest') || card.text.type.text.toLowerCase().includes('forest'))) {
+		if (!colors.includes('G') && (rules.toLowerCase().includes('forest') || typeText.toLowerCase().includes('forest'))) {
 			colors.push('G');
 		}
 
@@ -819,60 +844,423 @@ function autoFrame() {
 
 
 	} else {
-		colors = [...new Set(card.text.mana.text.toUpperCase().split('').filter(char => ['W', 'U', 'B', 'R', 'G'].includes(char)))];
+		colors = [...new Set(manaText.toUpperCase().split('').filter(char => ['W', 'U', 'B', 'R', 'G'].includes(char)))];
+	}
+	//faces without a mana cost (transform backs, color indicators) take their colors from the imported print
+	if (printPlan && colors.length == 0 && autoFramePrint && autoFramePrint.colors && !typeText.includes('Land')) {
+		colors = ['W', 'U', 'B', 'R', 'G'].filter(color => autoFramePrint.colors.includes(color));
+	}
+
+	if (printPlan && printPlan.pack) {
+		var plannedPack = printPlan.pack;
+		if (autoFramePack != plannedPack) {
+			loadFramePackForAutoFrame(plannedPack).then(() => { autoFramePack = plannedPack; autoFrame(); });
+			return;
+		}
+		buildPrintPackFrames(printPlan, colors, manaText, typeText, ptText, autoFramePrint).then(built => {
+			if (!built) {
+				//the pack doesn't use the usual frame names: remember it and fall back to the closest standard frame
+				autoFrameUnusablePacks.push(plannedPack);
+				autoFrame();
+			}
+		});
+		return;
 	}
 
 	var group;
+	var framing;
 	if (frame == 'M15Regular-1') {
-		autoM15Frame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoM15Frame(colors, manaText, typeText, ptText);
 		group = 'Standard-3';
 	} else if (frame == 'M15RegularNew') {
-		autoM15NewFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoM15NewFrame(colors, manaText, typeText, ptText);
 		group = 'Accurate';
 	} else if (frame == 'M15Eighth') {
-		autoM15EighthFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoM15EighthFrame(colors, manaText, typeText, ptText);
 		group = 'Custom';
 	} else if (frame == 'M15EighthUB') {
-		autoM15EighthUBFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoM15EighthUBFrame(colors, manaText, typeText, ptText);
 		group = 'Custom';
 	} else if (frame == 'UB') {
-		autoUBFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoUBFrame(colors, manaText, typeText, ptText);
 		group = 'Showcase-5';
 	} else if (frame == 'UBNew') {
-		autoUBNewFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoUBNewFrame(colors, manaText, typeText, ptText);
 		group = 'Accurate';
 	} else if (frame == 'FullArtNew') {
-		autoFullArtNewFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoFullArtNewFrame(colors, manaText, typeText, ptText);
 		group = 'Accurate';
 	} else if (frame == 'Circuit') {
-		autoCircuitFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoCircuitFrame(colors, manaText, typeText, ptText);
 		group = 'Custom';
 	} else if (frame == 'Etched') {
 		group = 'Showcase-5';
-		autoEtchedFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoEtchedFrame(colors, manaText, typeText, ptText);
 	} else if (frame == 'Praetors') {
 		group = 'Showcase-5';
-		autoPhyrexianFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoPhyrexianFrame(colors, manaText, typeText, ptText);
 	} else if (frame == 'Seventh') {
 		group = 'Misc-2';
-		autoSeventhEditionFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoSeventhEditionFrame(colors, manaText, typeText, ptText);
 	} else if (frame == 'M15BoxTopper') {
 		group = 'Showcase-5';
-		autoExtendedArtFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text, false);
+		framing = autoExtendedArtFrame(colors, manaText, typeText, ptText, false);
 	} else if (frame == 'M15ExtendedArtShort') {
 		group = 'Showcase-5';
-		autoExtendedArtFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text, true);
+		framing = autoExtendedArtFrame(colors, manaText, typeText, ptText, true);
 	} else if (frame == '8th') {
 		group = 'Misc-2';
-		auto8thEditionFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text, false);
+		framing = auto8thEditionFrame(colors, manaText, typeText, ptText, false);
 	} else if (frame == 'Borderless') {
 		group = 'Showcase-5';
-		autoBorderlessFrame(colors, card.text.mana.text, card.text.type.text, card.text.pt.text);
+		framing = autoBorderlessFrame(colors, manaText, typeText, ptText);
+	}
+
+	if (printPlan && framing) {
+		var stampArgs = [printStamp, colors, manaText, typeText, ptText];
+		var listPrint = autoFramePrint;
+		framing.then(async () => {
+			if (printStamp) { await addPrintHoloStamp(...stampArgs); }
+			await addTheListStamp(listPrint);
+		});
 	}
 
 	if (autoFramePack != frame) {
 		loadScript('/js/frames/pack' + frame + '.js');
 		autoFramePack = frame;
+	}
+}
+var autoFrameUnusablePacks = []; //packs whose frames couldn't be matched automatically (they use other frame names)
+//Showcase frame of each set (set code -> frame pack); a function picks between several showcases of the same set
+var autoFrameShowcasePacks = {
+	otj: 'Wanted', pip: 'Pipboy', mkm: 'Dossier', ltr: 'Scroll', who: 'TARDIS', one: 'OilSlick', dmu: 'DMUStainedGlass',
+	snc: 'SNCArtDeco', vow: 'Fang', mid: 'Equinox', afr: 'DNDModule', mh2: 'MH2', cmr: 'CommanderLegends', znr: 'ZendikarRising',
+	m21: 'M21', thb: 'M15NyxShowcase',
+	neo: print => (print.type_line || '').includes('Samurai') ? 'NeoSamurai' : 'NeoNinja',
+	khm: print => (print.type_line || '').includes('Legendary') ? 'Kaldheim-2' : 'KaldheimNonleg'
+};
+//Sets where every card uses a special frame, showcase or not
+var autoFrameSetPacks = {
+	wot: 'EnchantingTales', otp: 'BreakingNews', big: 'Vault', dbl: 'DoubleFeature', zne: 'ExpeditionZNR-1', exp: 'ExpeditionBFZ-1', mp2: 'Invocation', mps: 'Invention',
+	sta: print => print.lang == 'ja' ? 'MysticalArchiveJP' : 'MysticalArchive'
+};
+//Frame packs that share the bottom of the M15 frame, so the M15 holo stamp fits them
+var autoFrameM15BottomPacks = ['M15TransformFront', 'M15TransformBack', 'ModalRegular', 'ModalExtended', 'Adventure', 'Class', 'Case', 'M15Mutate', 'Prototype', 'Levelers'];
+//Picks how to replicate an imported print: a frame pack built from its frames ("pack"), or one of the auto frame styles above ("style")
+function autoFrameStyleFromPrint(print) {
+	if (!print || !print.layout) {
+		return {style: 'M15Regular-1'}; //nothing imported (yet)
+	}
+	var typeLine = print.type_line || '';
+	var effects = print.frame_effects || [];
+	var stamp = ['oval', 'acorn'].includes(print.security_stamp) ? print.security_stamp : null;
+	var layout = print.layout;
+	var borderless = print.border_color == 'borderless';
+	var extended = effects.includes('extendedart');
+	var face = print.face_index == 1 ? 'Back' : 'Front';
+	var plan = null;
+
+	//layouts that need their own frame version
+	if (typeLine.includes('Planeswalker')) {
+		if (layout == 'transform') {
+			plan = {pack: 'PlaneswalkerTransform' + face, face: face};
+		} else if (layout == 'modal_dfc') {
+			plan = {pack: 'PlaneswalkerMDFC', face: face};
+		} else if (borderless) {
+			plan = {pack: 'PlaneswalkerBorderless'};
+		} else if (extended) {
+			plan = {pack: 'PlaneswalkerBoxTopper'};
+		} else {
+			plan = {pack: (print.oracle_text || '').split('\n').length >= 4 ? 'PlaneswalkerTall' : 'PlaneswalkerRegular'};
+		}
+	} else if (typeLine.startsWith('Battle')) {
+		plan = {pack: 'Battle'}; //Scryfall lists battles as transform cards (they have a back face)
+	} else if (layout == 'saga') {
+		plan = {pack: print.security_stamp == 'triangle' ? 'SagaUB' : 'SagaRegular', crown: 'm15'};
+	} else if (layout == 'transform' && face == 'Front' && typeLine.includes('Saga')) {
+		plan = {pack: 'SagaDFC', crown: 'm15'};
+	} else if (layout == 'transform') {
+		if (print.set == 'mid' && effects.includes('showcase')) {
+			plan = {pack: 'Equinox' + face, face: face};
+		} else if (print.set == 'dbl') {
+			plan = {pack: 'DoubleFeatureTransform', face: face};
+		} else if (borderless) {
+			plan = {pack: 'TransformBorderless' + face, face: face};
+		} else if (extended) {
+			plan = {pack: 'TransformExtended' + face, face: face};
+		} else {
+			plan = {pack: 'M15Transform' + face, face: face, crown: 'transform'};
+		}
+	} else if (layout == 'modal_dfc') {
+		plan = {pack: borderless ? 'ModalBorderless' : (extended ? 'ModalExtended' : 'ModalRegular'), face: face, crown: borderless || extended ? null : 'modal'};
+	} else if (layout == 'adventure') {
+		var storybook = effects.includes('showcase') ? {eld: 'Storybook', woe: 'StorybookWOE'}[print.set] : null;
+		plan = {pack: storybook || 'Adventure', crown: storybook ? null : 'm15'};
+	} else if (layout == 'split') {
+		plan = {pack: (print.keywords || []).includes('Aftermath') ? 'Aftermath' : 'Split'};
+	} else if (['flip', 'class', 'case', 'leveler', 'prototype', 'mutate'].includes(layout)) {
+		plan = {pack: {flip: 'Flip', class: 'Class', case: 'Case', leveler: 'Levelers', prototype: 'Prototype', mutate: 'M15Mutate'}[layout], crown: ['class', 'case', 'mutate'].includes(layout) ? 'm15' : null};
+	} else if (layout == 'token' || layout == 'double_faced_token') {
+		plan = {pack: (print.oracle_text || '').trim() == '' ? 'TokenTextless-1' : 'TokenRegular-1'};
+	} else if (layout != 'normal') {
+		return {style: null, notice: 'Auto frame: ' + layout.replace(/_/g, ' ') + ' cards are not supported, so the frame was left as it is. You can pick it in the Frame tab.'};
+	} else if (!['1993', '1997', '2003'].includes(print.frame)) {
+		//special frames of a set (showcases, Mystical Archive, Expeditions...)
+		var setPack = autoFrameSetPacks[print.set] || (effects.includes('showcase') ? autoFrameShowcasePacks[print.set] : null);
+		if (typeof setPack == 'function') {
+			setPack = setPack(print);
+		}
+		if (setPack) {
+			plan = {pack: setPack};
+		}
+	}
+
+	if (plan) {
+		if (!autoFrameUnusablePacks.includes(plan.pack)) {
+			plan.stamp = stamp;
+			plan.m15Bottom = autoFrameM15BottomPacks.includes(plan.pack);
+			return plan;
+		}
+		if (layout != 'normal' || typeLine.includes('Planeswalker')) {
+			return {style: null, notice: 'Auto frame: the ' + plan.pack + ' frame could not be built automatically, so the frame was left as it is. You can pick it in the Frame tab.'};
+		}
+	}
+
+	if (print.frame == '1993' || print.frame == '1997') {
+		return {style: 'Seventh', notice: print.frame == '1993' ? 'Auto frame: the original (1993) frame is not available automatically, the Seventh Edition frame was used.' : ''};
+	}
+	if (print.frame == '2003') {
+		return {style: '8th', notice: effects.includes('colorshifted') ? 'Auto frame: colorshifted frames are not available automatically, the regular 8th Edition frame was used.' : ''};
+	}
+	if (print.frame == 'future') {
+		return {style: 'M15Regular-1', stamp: stamp, notice: 'Auto frame: the Future Shifted frame is not available automatically, the Regular frame was used.'};
+	}
+	var style = {style: 'M15Regular-1', stamp: stamp};
+	if (effects.includes('etched')) {
+		style = {style: 'Etched'};
+	} else if (print.border_color == 'borderless') {
+		style = {style: 'Borderless'};
+	} else if (effects.includes('extendedart')) {
+		style = {style: 'M15BoxTopper', stamp: stamp};
+	} else if (print.security_stamp == 'triangle') {
+		style = {style: 'UB'};
+	}
+	if (effects.includes('showcase') || plan) {
+		style.notice = 'Auto frame: this special frame (' + (plan ? plan.pack : 'showcase of ' + print.set.toUpperCase()) + ') is not available automatically, the closest frame (' + document.querySelector('#autoFrame option[value="' + style.style + '"]').textContent + ') was used.';
+	}
+	return style;
+}
+//Loads a frame pack (and its frame version) and waits until it's ready, so the imported text lands in the right text boxes
+var autoFramePackFrames = null; //the frames of the pack loaded by the auto frame (the Frame tab may show another pack later)
+function loadFramePackForAutoFrame(pack) {
+	return new Promise(resolve => {
+		var autoLoadVersion = localStorage.getItem('autoLoadFrameVersion');
+		localStorage.setItem('autoLoadFrameVersion', 'false'); //the version is loaded below, after the pack
+		var script = document.createElement('script');
+		script.onload = async function() {
+			localStorage.setItem('autoLoadFrameVersion', autoLoadVersion);
+			autoFramePackFrames = availableFrames;
+			var loadVersionButton = document.querySelector('#loadFrameVersion');
+			if (!loadVersionButton.disabled && loadVersionButton.onclick) {
+				try {
+					await loadVersionButton.onclick();
+				} catch (error) {
+					console.log('Auto frame: loading the frame version of ' + pack + ' failed', error);
+				}
+				//some versions load an extra script (sagas, planeswalkers, classes...) with their own inputs
+				for (var waited = 0; card.onload && !loadedVersions.includes(card.onload) && waited < 5000; waited += 100) {
+					await new Promise(wait => setTimeout(wait, 100));
+				}
+			}
+			resolve(true);
+		};
+		script.onerror = function() {
+			localStorage.setItem('autoLoadFrameVersion', autoLoadVersion);
+			notify('Auto frame: the frame pack ' + pack + ' could not be loaded.', 5);
+			resolve(false);
+		};
+		script.src = '/js/frames/pack' + pack + '.js';
+		document.head.appendChild(script);
+	});
+}
+//Builds the frames of the imported print from the frames of a pack ("White Frame" + masks, "White Power/Toughness", "Holo Stamp"...)
+async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, print) {
+	var packFrames = autoFramePackFrames || availableFrames;
+	var properties = cardFrameProperties(colors, manaCost, typeLine, power);
+	var colorNames = {W: ['White'], U: ['Blue'], B: ['Black'], R: ['Red'], G: ['Green'], M: ['Multicolored', 'Multicolor', 'Gold'], A: ['Artifact', 'Colorless'], C: ['Colorless', 'Artifact'], L: ['Land', 'Colorless', 'Artifact'], V: ['Vehicle', 'Artifact']};
+	function namesFor(letter) {
+		if (letter.length > 1 && letter.endsWith('L')) { //colored lands
+			return [colorNames[letter[0]][0] + ' Land', 'Land', colorNames[letter[0]][0]];
+		}
+		return colorNames[letter] || [];
+	}
+	function findEntry(letter, kinds) {
+		var suffixes = plan.face ? [' (' + plan.face + ')', ''] : [''];
+		for (var name of namesFor(letter)) {
+			for (var kind of kinds) {
+				for (var suffix of suffixes) {
+					var entry = packFrames.find(frame => frame.name == name + ' ' + kind + suffix);
+					if (entry) { return entry; }
+				}
+			}
+		}
+		//names with a nickname, e.g. "Red Frame (Chandra)"
+		if (!plan.face) {
+			for (var name of namesFor(letter)) {
+				for (var kind of kinds) {
+					var entry = packFrames.find(frame => frame.name.startsWith(name + ' ' + kind + ' ('));
+					if (entry) { return entry; }
+				}
+			}
+		}
+		return null;
+	}
+	function copyWithMasks(entry, masks) {
+		var frame = JSON.parse(JSON.stringify(entry));
+		frame.masks = masks;
+		delete frame.complementary;
+		return frame;
+	}
+	var rightHalf = {src: '/img/frames/maskRightHalf.png', name: 'Right Half'};
+	var frames = [];
+	//which color each part of the frame takes
+	var maskLetters = {
+		'Loyalty': ['frame'], 'Defense': ['frame'], 'Bevel': ['frame'], 'Flipside': ['pinline'], 'MDFC Arrow': ['pinline'], 'Reminder': ['pinline'],
+		'Banner': ['pinline'], 'Pinline': ['pinline', 'pinlineRight'], 'Twins': ['typeTitle'], 'Type': ['typeTitle'], 'Title': ['typeTitle'],
+		'Rules': ['rules', 'rulesRight'], 'Text': ['rules', 'rulesRight'], 'Frame': ['frame', 'frameRight'], 'Border': ['frame']
+	};
+
+	//holo stamp (split in two colors like the pinlines)
+	if (plan.stamp) {
+		var stampEntry = plan.stamp == 'oval' ? (findEntry(properties.frame, ['Holo Stamp']) || packFrames.find(frame => frame.name == 'Holo Stamp')) : null;
+		var stampRightEntry = plan.stamp == 'oval' && properties.pinlineRight ? findEntry(properties.pinlineRight, ['Holo Stamp']) : null;
+		if (stampRightEntry) {
+			frames.push(copyWithMasks(stampRightEntry, [rightHalf]));
+			stampEntry = findEntry(properties.pinline, ['Holo Stamp']) || stampEntry;
+		}
+		if (stampEntry) {
+			frames.push(copyWithMasks(stampEntry, []));
+		} else if (plan.m15Bottom) {
+			frames.push('m15Stamp'); //added after the other frames, like the regular auto frame does
+		}
+	}
+	//legend crown
+	if (typeLine.includes('Legendary') && plan.crown) {
+		var crownLetter = properties.pinline.length > 1 && properties.pinline.endsWith('L') ? properties.pinline[0] : properties.pinline;
+		if (crownLetter == 'V') { crownLetter = 'A'; }
+		if (plan.crown == 'm15') {
+			if (properties.pinlineRight) { frames.push(makeM15FrameByLetter(properties.pinlineRight, 'Crown', true)); }
+			frames.push(makeM15FrameByLetter(properties.pinline, 'Crown', false));
+		} else {
+			var crownFolder = plan.crown == 'transform' ? '/img/frames/m15/transform/crowns/regular/' : '/img/frames/modal/crowns/regular/';
+			frames.push({name: namesFor(crownLetter)[0] + ' Legend Crown', src: crownFolder + crownLetter.toLowerCase() + '.png', masks: [], bounds: {x: 0.0274, y: 0.0191, width: 0.9454, height: 0.1667}});
+		}
+		frames.push(makeM15FrameByLetter(properties.pinline, 'Crown Border Cover', false));
+	}
+	//power/toughness box
+	if (properties.pt) {
+		var ptEntry = findEntry(properties.pt, ['Power/Toughness', 'PT']) || findEntry(properties.typeTitle, ['Power/Toughness', 'PT']);
+		if (ptEntry) { frames.push(copyWithMasks(ptEntry, [])); }
+	}
+	//the frame itself, part by part (or whole, when the pack has no masks)
+	var mainEntry = findEntry(properties.frame, ['Frame']) || findEntry(properties.typeTitle, ['Frame']);
+	if (!mainEntry) {
+		return false;
+	}
+	var partsAdded = 0;
+	if (mainEntry.masks && mainEntry.masks.some(mask => mask.name == 'Top Half')) {
+		//split cards: each half takes the color of its own face
+		var faces = print.sibling_faces || [];
+		[['Top Half', 0], ['Bottom Half', 1]].forEach(([maskName, faceIndex]) => {
+			var faceData = faces[faceIndex] || {};
+			var faceColors = ['W', 'U', 'B', 'R', 'G'].filter(color => (faceData.mana_cost || manaCost).toUpperCase().includes(color));
+			var faceEntry = findEntry(cardFrameProperties(faceColors, faceData.mana_cost || manaCost, faceData.type_line || typeLine, null).frame, ['Frame']) || mainEntry;
+			frames.push(copyWithMasks(faceEntry, [faceEntry.masks.find(mask => mask.name == maskName)]));
+			partsAdded ++;
+		});
+	} else if (mainEntry.masks && mainEntry.masks.length) {
+		for (var maskName of Object.keys(maskLetters)) {
+			var mask = mainEntry.masks.find(item => item.name == maskName);
+			if (!mask) { continue; }
+			var [letterKey, rightKey] = maskLetters[maskName];
+			//the right half goes on top of the left one
+			if (rightKey && properties[rightKey]) {
+				var rightEntry = findEntry(properties[rightKey], ['Frame']);
+				if (rightEntry) { frames.push(copyWithMasks(rightEntry, [mask, rightHalf])); }
+			}
+			var partEntry = findEntry(properties[letterKey], ['Frame']) || mainEntry;
+			frames.push(copyWithMasks(partEntry, [mask]));
+			partsAdded ++;
+		}
+		//when the pack's masks don't cover the whole card (no "Frame"/"Border" part), the whole frame goes underneath
+		if (!mainEntry.masks.some(mask => mask.name == 'Frame' || mask.name == 'Border')) {
+			partsAdded = 0;
+		}
+	}
+	if (partsAdded == 0) {
+		frames.push(copyWithMasks(mainEntry, []));
+	}
+
+	var addM15Stamp = frames.includes('m15Stamp');
+	frames = frames.filter(frame => frame != 'm15Stamp');
+	frames = card.frames.filter(frame => frame.name.includes('Extension')).concat(frames);
+	card.frames = [];
+	document.querySelector('#frame-list').innerHTML = null;
+	card.frames = frames;
+	card.frames.reverse();
+	await card.frames.forEach(item => addFrame([], item));
+	card.frames.reverse();
+	if (addM15Stamp) {
+		await addPrintHoloStamp(plan.stamp, colors, manaCost, typeLine, power);
+	}
+	await addTheListStamp(print);
+	drawFrames();
+	return true;
+}
+//Adds the holo stamp of the imported print on top of the M15 (regular/extended art) frames
+async function addPrintHoloStamp(stamp, colors, manaCost, typeLine, power) {
+	var stampFrames = [];
+	if (stamp == 'acorn') {
+		stampFrames.push({name: 'Acorn Holo Stamp', src: '/img/frames/m15/holoStamps/acorn.png', masks: [], bounds: {x: 0.4554, y: 0.9129, width: 0.0894, height: 0.0381}});
+	} else {
+		var properties = cardFrameProperties(colors, manaCost, typeLine, power);
+		var stampNames = {W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green', M: 'Multicolored', A: 'Artifact', L: 'Land', C: 'Colorless'};
+		var stampFrame = function(letter, rightHalf) {
+			if (letter.length > 1 && letter.endsWith('L')) { letter = letter[0]; } //colored lands
+			if (letter == 'V') { letter = 'A'; }
+			return {name: stampNames[letter] + ' Holo Stamp', src: '/img/frames/m15/holoStamps/m15HoloStamp' + letter + '.png', masks: rightHalf ? [{src: '/img/frames/maskRightHalf.png', name: 'Right Half'}] : [], bounds: {x: 0.436, y: 0.9034, width: 0.128, height: 0.0458}};
+		};
+		if (properties.pinlineRight) {
+			//two colors: the stamp is split like the pinlines
+			stampFrames.push(stampFrame(properties.pinline, false), stampFrame(properties.pinlineRight, true));
+		} else {
+			var letter = properties.frame;
+			if (letter == 'L' && colors.length == 0 && !typeLine.includes('Land')) {
+				letter = 'C';
+			}
+			stampFrames.push(stampFrame(letter, false));
+		}
+	}
+	for (var stampFrame of stampFrames) {
+		card.frames.unshift(stampFrame);
+		await addFrame([], stampFrame);
+	}
+	drawFrames();
+}
+//"The List" reprints have the List icon at the bottom left
+function theListStampFrame(print) {
+	if (!print || !theListOriginalPrint(print)) {
+		return null;
+	}
+	var oldFrame = ['1993', '1997', '2003'].includes(print.frame);
+	return {name: '"The List" Stamp', src: '/img/frames/m15/theList/' + (oldFrame ? 'old' : 'regular') + '.svg', masks: []};
+}
+async function addTheListStamp(print) {
+	var listFrame = theListStampFrame(print);
+	if (listFrame) {
+		card.frames.unshift(listFrame);
+		await addFrame([], listFrame);
+		drawFrames();
 	}
 }
 async function autoUBFrame(colors, mana_cost, type_line, power) {
@@ -3347,7 +3735,32 @@ function autoFrameBuffer() {
 	clearTimeout(autoFrameTimer);
 	autoFrameTimer = setTimeout(autoFrame, 500);
 }
+//Canvas text only uses a web font once it has loaded (until then it draws with a fallback font):
+//load the fonts these text boxes need before drawing them
+async function loadFontsForText(textObjects) {
+	var families = new Set(['belerenb']);
+	textObjects.forEach(textObject => {
+		var font = (textObject.font || 'mplantin').toLowerCase();
+		[font, font + 'i', font + 'italic', font + 'bold'].forEach(family => families.add(family)); //italic/bold variants
+		(textObject.text || '').replace(/\{font([^}]+)\}/g, (code, family) => families.add(family.toLowerCase()));
+	});
+	var loading = [];
+	document.fonts.forEach(fontFace => {
+		if (fontFace.status != 'loaded' && families.has(fontFace.family.replace(/["']/g, '').toLowerCase())) {
+			loading.push(fontFace.load().catch(() => {}));
+		}
+	});
+	if (loading.length) {
+		await Promise.race([Promise.all(loading), new Promise(resolve => setTimeout(resolve, 5000))]);
+	}
+}
+var drawTextRequest = 0;
 async function drawText() {
+	var request = ++drawTextRequest;
+	await loadFontsForText(Object.values(card.text || {}));
+	if (request != drawTextRequest) {
+		return; //a newer drawing started while the fonts were loading
+	}
 	textContext.clearRect(0, 0, textCanvas.width, textCanvas.height);
 	prePTContext.clearRect(0, 0, prePTCanvas.width, prePTCanvas.height);
 	drawTextBetweenFrames = false;
@@ -3365,12 +3778,31 @@ async function drawText() {
 	}
 }
 var justifyWidth = 90;
+//Width the type line can use without running under the set symbol (in pixels)
+function typeWidthBesideSetSymbol(textX, textY, textWidth, textHeight) {
+	if (!setSymbol.complete || !setSymbol.naturalWidth || setSymbol.src.includes('/img/blank.png')) {
+		return textWidth;
+	}
+	var symbolLeft = scaleX(card.setSymbolX);
+	var symbolTop = scaleY(card.setSymbolY);
+	var symbolRight = symbolLeft + setSymbol.width * card.setSymbolZoom;
+	var symbolBottom = symbolTop + setSymbol.height * card.setSymbolZoom;
+	var overlaps = symbolTop < textY + textHeight && symbolBottom > textY && symbolLeft < textX + textWidth && symbolRight > textX;
+	if (!overlaps) {
+		return textWidth;
+	}
+	return Math.max(symbolLeft - textX - scaleWidth(0.01), textWidth / 2);
+}
 function writeText(textObject, targetContext) {
 	//Most bits of info about text loaded, with defaults when needed
 	var textX = scaleX(textObject.x) || scaleX(0);
 	var textY = scaleY(textObject.y) || scaleY(0);
 	var textWidth = scaleWidth(textObject.width) || scaleWidth(1);
 	var textHeight = scaleHeight(textObject.height) || scaleHeight(1);
+	if (textObject.name == 'Type' && !textObject.rotation) {
+		//the type line shrinks instead of running under the set symbol
+		textWidth = typeWidthBesideSetSymbol(textX, textY, textWidth, textHeight);
+	}
 	var startingTextSize = scaleHeight(textObject.size) || scaleHeight(0.038);
 	var textFontHeightRatio = 0.7;
 	var textBounded = textObject.bounded || true;
@@ -3684,7 +4116,8 @@ function writeText(textObject, targetContext) {
 						wordToWrite = document.querySelector('#' + word.replace('{elemid', '').replace('}', '')).value || '';
 					}
 					if (word.includes('set')) {
-						var bottomTextSubstring = card.bottomInfo.midLeft.text.substring(0, card.bottomInfo.midLeft.text.indexOf('  {savex}')).replace('{elemidinfo-set}', document.querySelector('#info-set').value || '').replace('{elemidinfo-language}', document.querySelector('#info-language').value || '');
+						var setLineText = (card.bottomInfo.midLeft || textObject).text; //some frames (e.g. Invocations) have no midLeft line
+						var bottomTextSubstring = setLineText.substring(0, setLineText.indexOf('  {savex}')).replace('{elemidinfo-set}', document.querySelector('#info-set').value || '').replace('{elemidinfo-language}', document.querySelector('#info-language').value || '');
 						justifyWidth = lineContext.measureText(bottomTextSubstring).width;
 					} else if (word.includes('number') && wordToWrite.includes('/') && card.version != 'pokemon') {
 						fillJustify = true;
@@ -4151,8 +4584,8 @@ function artFromScryfall(scryfallResponse) {
 		}
 	});
 
-	if (document.querySelector('#importAllPrints').checked) {
-		// If importing unique prints, the art should change to match the unique print selected.
+	if (document.querySelector('#importAllPrints').checked || (document.querySelector('#autoFrame').value == 'FromPrint' && autoFramePrint)) {
+		// If importing unique prints (or replicating the imported print), the art should change to match the print selected.
 
 		// First we find the illustration ID of the imported print
 		var illustrationID = scryfallCard[document.querySelector('#import-index').value].illustration_id;
@@ -4273,6 +4706,9 @@ function setSymbolEdited() {
 	card.setSymbolY = document.querySelector('#setSymbol-y').value / card.height;
 	card.setSymbolZoom = document.querySelector('#setSymbol-zoom').value / 100;
 	drawCard();
+	if (card.text && card.text.type) {
+		drawTextBuffer(); //the type line fits itself beside the set symbol
+	}
 }
 function resetSetSymbol() {
 	if (card.setSymbolBounds == undefined) {
@@ -4301,6 +4737,7 @@ function resetSetSymbol() {
 }
 function fetchSetSymbol() {
 	var setCode = document.querySelector('#set-symbol-code').value.toLowerCase() || 'cmd';
+	refreshSetSymbolPicker();
 	if (document.querySelector('#lockSetSymbolCode').checked) {
 		localStorage.setItem('lockSetSymbolCode', setCode);
 	}
@@ -4309,9 +4746,10 @@ function fetchSetSymbol() {
 		uploadSetSymbol(fixUri(`/img/setSymbols/custom/${setCode.toLowerCase()}-${setRarity}.png`), 'resetSetSymbol');
 	} else if (['cc', 'logan', 'joe'].includes(setCode.toLowerCase())) {
 		uploadSetSymbol(fixUri(`/img/setSymbols/custom/${setCode.toLowerCase()}-${setRarity}.svg`), 'resetSetSymbol');
-	} else if (document.querySelector("#set-symbol-source").value == 'gatherer') {
+	} else if (document.querySelector("#set-symbol-source").value == 'scryfall') {
+		// Scryfall's set icons are single color (no rarity colors); they replace the old Gatherer source, which no longer exists
 		if (setSymbolAliases.has(setCode.toLowerCase())) setCode = setSymbolAliases.get(setCode.toLowerCase());
-		uploadSetSymbol('http://gatherer.wizards.com/Handlers/Image.ashx?type=symbol&set=' + setCode + '&size=large&rarity=' + setRarity, 'resetSetSymbol');
+		uploadSetSymbol('https://svgs.scryfall.io/sets/' + setCode + '.svg', 'resetSetSymbol');
 	} else if (document.querySelector("#set-symbol-source").value == 'hexproof') {
 		if (setSymbolAliases.has(setCode.toLowerCase())) setCode = setSymbolAliases.get(setCode.toLowerCase());
 		uploadSetSymbol('https://api.hexproof.io/symbols/set/' + setCode + '/' + setRarity, 'resetSetSymbol');
@@ -4337,6 +4775,109 @@ function lockSetSymbolURL() {
 		savedValue = card.setSymbolSource;
 	}
 	localStorage.setItem('lockSetSymbolURL', savedValue);
+}
+//Set symbol picker (visual grid instead of typing the set code)
+var setSymbolPickerSets = [];
+var setSymbolPickerNames = {};
+function setSymbolPickerFileRarity(rarities, wanted) {
+	return [wanted, 'c', 'r', 'u', 'm', 's', 'wm', '80', 't'].find(r => rarities[r]);
+}
+function setSymbolPickerPreviewSrc(set, rarity) {
+	var fileRarity = setSymbolPickerFileRarity(set.rarities, rarity);
+	return fixUri('/img/setSymbols/' + set.kind + '/' + set.file + '-' + fileRarity + '.' + set.rarities[fileRarity]);
+}
+function setSymbolPickerTile(set) {
+	var tile = document.createElement('button');
+	tile.type = 'button';
+	tile.className = 'set-symbol-tile';
+	tile.dataset.code = set.code;
+	tile.onclick = function() { pickSetSymbol(set.code); };
+	var image = document.createElement('img');
+	image.loading = 'lazy';
+	image.alt = set.code;
+	var label = document.createElement('span');
+	label.textContent = set.code.toUpperCase();
+	tile.append(image, label);
+	set.tile = tile;
+	set.image = image;
+	return tile;
+}
+function setSymbolPickerRarity() {
+	return document.querySelector('#set-symbol-picker-rarity').value;
+}
+function renderSetSymbolPicker() {
+	var container = document.querySelector('#set-symbol-picker');
+	if (!container) { return; }
+	setSymbolPickerSets.sort(function(a, b) {
+		var dateA = (setSymbolPickerNames[a.code] || [])[1] || '', dateB = (setSymbolPickerNames[b.code] || [])[1] || '';
+		if (dateA != dateB) { return dateA < dateB ? 1 : -1; } //newest first, sets without a known date last
+		return a.code < b.code ? -1 : 1;
+	});
+	container.replaceChildren(...setSymbolPickerSets.map(set => set.tile || setSymbolPickerTile(set)));
+	refreshSetSymbolPicker();
+}
+function refreshSetSymbolPicker() {
+	if (!document.querySelector('#set-symbol-search') || setSymbolPickerSets.length == 0) { return; }
+	var query = (document.querySelector('#set-symbol-search').value || '').trim().toLowerCase();
+	var rarity = setSymbolPickerRarity();
+	var currentCode = document.querySelector('#set-symbol-code').value.toLowerCase();
+	for (var set of setSymbolPickerSets) {
+		var name = (setSymbolPickerNames[set.code] || [])[0] || '';
+		set.tile.title = set.code.toUpperCase() + (name ? ' - ' + name : '');
+		set.tile.hidden = query != '' && !set.code.includes(query) && !name.toLowerCase().includes(query);
+		set.tile.classList.toggle('selected', set.code == currentCode);
+		var src = setSymbolPickerPreviewSrc(set, rarity);
+		if (set.image.getAttribute('src') != src) {
+			set.image.src = src;
+		}
+	}
+}
+function pickSetSymbol(code) {
+	document.querySelector('#set-symbol-source').value = 'cardconjurer'; //the picker lists the local symbols
+	document.querySelector('#set-symbol-code').value = code;
+	var set = setSymbolPickerSets.find(s => s.code == code);
+	document.querySelector('#set-symbol-rarity').value = setSymbolPickerFileRarity(set.rarities, setSymbolPickerRarity());
+	fetchSetSymbol();
+	refreshSetSymbolPicker();
+}
+function setSymbolPickerRarityChanged() {
+	var code = document.querySelector('#set-symbol-code').value.toLowerCase();
+	if (setSymbolPickerSets.some(s => s.code == code) && document.querySelector('#set-symbol-source').value == 'cardconjurer') {
+		pickSetSymbol(code); //reload the current set in the new rarity
+	} else {
+		refreshSetSymbolPicker();
+	}
+}
+async function loadSetSymbolPicker() {
+	if (!document.querySelector('#set-symbol-picker')) { return; }
+	try {
+		var manifest = await (await fetch(fixUri('/data/setSymbols.json'))).json();
+	} catch (error) {
+		document.querySelector('#set-symbol-picker').textContent = 'Could not load the set symbol list. You can still type a set code below.';
+		return;
+	}
+	for (var kind of ['official', 'custom']) {
+		for (var file of Object.keys(manifest[kind])) {
+			var code = file.toLowerCase();
+			if (setSymbolAliases.has(code) || setSymbolPickerSets.some(s => s.code == code)) { continue; }
+			setSymbolPickerSets.push({code: code, file: file, kind: kind, rarities: manifest[kind][file]});
+		}
+	}
+	try { setSymbolPickerNames = JSON.parse(localStorage.getItem('setSymbolNames') || '{}'); } catch (error) { setSymbolPickerNames = {}; }
+	renderSetSymbolPicker();
+	// set names (so you can search "Lord of the Rings" instead of knowing it is "ltr"), cached after the first load
+	if (Object.keys(setSymbolPickerNames).length == 0) {
+		try {
+			var scryfallSets = (await (await fetch('https://api.scryfall.com/sets')).json()).data;
+			for (var scryfallSet of scryfallSets) {
+				setSymbolPickerNames[scryfallSet.code] = [scryfallSet.name, scryfallSet.released_at || ''];
+			}
+			try { localStorage.setItem('setSymbolNames', JSON.stringify(setSymbolPickerNames)); } catch (error) {}
+			renderSetSymbolPicker();
+		} catch (error) {
+			// no names available: the picker still works with set codes
+		}
+	}
 }
 //WATERMARK TAB
 function uploadWatermark(imageSource, otherParams) {
@@ -4438,7 +4979,13 @@ async function loadBottomInfo(textObjects = []) {
 	await bottomInfoEdited();
 	bottomInfoEdited();
 }
+var bottomInfoRequest = 0;
 async function bottomInfoEdited() {
+	var request = ++bottomInfoRequest;
+	await loadFontsForText(Object.values(card.bottomInfo || {}));
+	if (request != bottomInfoRequest) {
+		return; //a newer drawing started while the fonts were loading
+	}
 	await bottomInfoContext.clearRect(0, 0, bottomInfoCanvas.width, bottomInfoCanvas.height);
 	card.infoNumber = document.querySelector('#info-number').value;
 	card.infoRarity = document.querySelector('#info-rarity').value;
@@ -4447,6 +4994,26 @@ async function bottomInfoEdited() {
 	card.infoArtist = document.querySelector('#info-artist').value;
 	card.infoYear = document.querySelector('#info-year').value;
 	card.infoNote = document.querySelector('#info-note').value;
+	// bottom right text (the Wizards of the Coast line): the frame's default unless the user edited it
+	var copyrightField = copyrightElement('info-copyright');
+	var defaultCopyright = card.bottomInfo && card.bottomInfo.wizards ? card.bottomInfo.wizards.text.replace(/^(\{[^}]*\})*/, '') : '';
+	if (!copyrightField.dataset.edited) {
+		copyrightField.value = defaultCopyright;
+	}
+	card.infoCopyright = copyrightField.dataset.edited ? copyrightField.value : null;
+
+	card.infoCopyrightX = parseFloat(copyrightElement('info-copyright-x').value) || 0;
+	card.infoCopyrightY = parseFloat(copyrightElement('info-copyright-y').value) || 0;
+
+	card.infoArtistX = parseFloat(copyrightElement('info-artist-x').value) || 0;
+	card.infoArtistY = parseFloat(copyrightElement('info-artist-y').value) || 0;
+
+	var wizardsObject = card.bottomInfo ? card.bottomInfo.wizards : null;
+	if (wizardsObject && wizardsObject.text.includes('Wizards of the Coast')) {
+		if (card.infoCopyright == null || card.infoCopyright.trim() != '') {
+			await writeText(customCopyrightObject(wizardsObject, card.infoCopyright), bottomInfoContext);
+		}
+	}
 
 	if (document.querySelector('#enableCollectorInfo').checked) {
 		for (var textObject of Object.entries(card.bottomInfo)) {
@@ -4454,13 +5021,64 @@ async function bottomInfoEdited() {
 				continue;
 			} else {
 				textObject[1].name = textObject[0];
-				await writeText(textObject[1], bottomInfoContext);
+				var drawObject = textObject[1];
+				if (drawObject.text.includes('{elemidinfo-artist}') && (card.infoArtistX || card.infoArtistY)) {
+					// user offset for the artist line, in pixels of the 1005 x 1407 preview
+					drawObject = Object.assign({}, drawObject, {x: drawObject.x + card.infoArtistX / 1005, y: drawObject.y + card.infoArtistY / 1407});
+				}
+				await writeText(drawObject, bottomInfoContext);
 			}
 			continue;
 		}
 	}
 
 	drawCard();
+}
+function copyrightEdited() {
+	copyrightElement('info-copyright').dataset.edited = '1';
+	bottomInfoEdited();
+}
+function resetArtistPosition() {
+	copyrightElement('info-artist-x').value = 0;
+	copyrightElement('info-artist-y').value = 0;
+	bottomInfoEdited();
+}
+function resetCopyright() {
+	delete copyrightElement('info-copyright').dataset.edited;
+	copyrightElement('info-copyright-x').value = 0;
+	copyrightElement('info-copyright-y').value = 0;
+	bottomInfoEdited();
+}
+// the bottom right text fields may be missing if an old cached copy of the page is loaded; never let that break the rest of the collector info
+function copyrightElement(id) {
+	return document.getElementById(id) || {value: '', dataset: {}};
+}
+function customCopyrightObject(original, customText) {
+	// keeps the frame's position/style and leading control codes (colors, shifts); customText null = frame default text
+	var copy = Object.assign({}, original);
+	copy.name = 'wizards';
+	if (customText != null) {
+		var leadingCodes = original.text.match(/^(\{[^}]*\})*/)[0];
+		copy.text = leadingCodes + customText;
+		var lineCount = customText.split('\n').length;
+		if (lineCount > 1) {
+			// grow the box downwards from the frame's line, like printed cards ("mtgstory.com" / "© ..." on top, Wizards below)
+			copy.oneLine = false;
+			copy.height = original.height * lineCount * 1.03;
+		}
+	}
+	// when the artist line ("Illus. ...") is drawn and its box overlaps this one, push this line below it
+	var artistObject = card.bottomInfo ? card.bottomInfo.top : null;
+	if (document.querySelector('#enableCollectorInfo').checked && document.querySelector('#info-artist').value != '' && artistObject && artistObject.text.includes('{elemidinfo-artist}')) {
+		var overlap = artistObject.y + (card.infoArtistY || 0) / 1407 + artistObject.height - original.y;
+		if (overlap > 0) {
+			copy.y += overlap;
+		}
+	}
+	// user offset in pixels of the 1005 x 1407 preview
+	copy.x += (card.infoCopyrightX || 0) / 1005;
+	copy.y += (card.infoCopyrightY || 0) / 1407;
+	return copy;
 }
 async function serialInfoEdited() {
 	card.serialNumber = document.querySelector('#serial-number').value;
@@ -4769,8 +5387,178 @@ function scryfallCardFromText(text) {
   return cardObject;
 }
 
-function changeCardIndex() {
+//Scryfall oracle text -> Card Conjurer text (italic reminder text and ability words, curly quotes, symbols)
+function formatImportedRulesText(oracleText, keywords) {
+	var italicExemptions = ['Boast', 'Cycling', 'Visit', 'Prize', 'I', 'II', 'III', 'IV', 'I, II', 'II, III', 'III, IV', 'I, II, III', 'II, III, IV', 'I, II, III, IV', '• Khans', '• Dragons', '• Mirran', '• Phyrexian', 'Prototype', 'Companion', 'To solve', 'Solved'];
+	var rulesText = (oracleText || '').replace(/(?:\((?:.*?)\)|[^"\n]+(?= — ))/g, function(a){
+	    if (italicExemptions.includes(a) || (keywords && keywords.indexOf('Spree') != -1 && a.startsWith('+'))) {return a;}
+	    return '{i}' + a + '{/i}';
+	});
+	rulesText = curlyQuotes(rulesText).replace(/{Q}/g, '{untap}').replace(/{∞}/g, "{inf}").replace(/• /g, '• {indent}');
+	rulesText = rulesText.replace('(If this card is your chosen companion, you may put it into your hand from outside the game for {3} any time you could cast a sorcery.)', '(If this card is your chosen companion, you may put it into your hand from outside the game for {3} as a sorcery.)')
+	return rulesText;
+}
+//Saga oracle text ("(reminder)\nI — ...\nII, III — ...") -> reminder box + one ability box per chapter line
+function importSagaChapters(oracleText) {
+	var lines = oracleText.split('\n');
+	var reminder = lines[0].startsWith('(') ? lines.shift() : '';
+	var chapters = lines.filter(line => /^[IVX]+(, [IVX]+)* — /.test(line)).slice(0, 4);
+	var otherLines = lines.filter(line => !chapters.includes(line));
+	card.text.reminder.text = formatImportedRulesText(reminder);
+	var totalHeight = scaleHeight(card.text.type.y - card.text.ability0.y) - scaleHeight(0.02);
+	for (var i = 0; i < 4; i ++) {
+		var chapter = chapters[i];
+		card.text['ability' + i].text = chapter ? formatImportedRulesText(chapter.replace(/^[IVX, ]+ — /, '')) : '';
+		if (i == chapters.length - 1 && otherLines.length) {
+			card.text['ability' + i].text += '{lns}' + formatImportedRulesText(otherLines.join('\n')); //e.g. the back face reminder of transforming sagas
+		}
+		document.querySelector('#saga-chapters-' + i).value = chapter ? chapter.split(' — ')[0].split(',').length : 0;
+		document.querySelector('#saga-height-' + i).value = chapter ? Math.round(totalHeight / chapters.length) : 0;
+	}
+	sagaEdited();
+}
+//The List reprints (set "plst") are numbered like "J25-270": the card shows its original set and number
+function theListOriginalPrint(print) {
+	var match = print.set == 'plst' ? (print.collector_number || '').match(/^([A-Za-z0-9]+)-(.+)$/) : null;
+	return match ? {set: match[1].toLowerCase(), number: match[2]} : null;
+}
+//Collector info style of the print's time: "R 0165" since Phyrexia: All Will Be One (February 2023), "106/259 R" before
+async function setCollectorStyleForPrint(print) {
+	var styleCheckbox = document.querySelector('#enableNewCollectorStyle');
+	var newStyle = (print.released_at || '') >= '2023-02-01';
+	if (styleCheckbox.checked == newStyle) {
+		return;
+	}
+	styleCheckbox.checked = newStyle;
+	localStorage.setItem('enableNewCollectorStyle', newStyle);
+	//frames that use the standard collector info get it redone in the other style (frames with their own keep theirs)
+	var standardKeys = ['midLeft', 'topLeft', 'note', 'rarity', 'bottomLeft', 'wizards', 'bottomRight'];
+	if (card.bottomInfo && card.bottomInfo.midLeft && Object.keys(card.bottomInfo).every(key => standardKeys.includes(key))) {
+		await setBottomInfoStyle();
+	}
+}
+//Lines printed above "Wizards of the Coast": the franchise owner on Universes Beyond cards, mtgstory.com on Story Spotlights
+var franchiseCopyrightLines = [
+	{setName: 'Marvel', line: '© MARVEL'}
+];
+function applyPrintCopyrightLines(print) {
+	var lines = [];
+	if ((print.promo_types || []).includes('universesbeyond')) {
+		var franchise = franchiseCopyrightLines.find(item => (print.set_name || '').includes(item.setName));
+		if (franchise) {
+			lines.push(franchise.line);
+		}
+	}
+	if (print.story_spotlight) {
+		lines.push('mtgstory.com');
+	}
+	var copyrightField = copyrightElement('info-copyright');
+	if (lines.length && card.bottomInfo && card.bottomInfo.wizards) {
+		copyrightField.value = lines.join('\n') + '\n' + card.bottomInfo.wizards.text.replace(/^(\{[^}]*\})*/, '');
+		copyrightField.dataset.edited = '1';
+	} else {
+		delete copyrightField.dataset.edited; //back to the frame's default line
+	}
+}
+//Retro frame lands whose only text is one line (e.g. "({T}: Add {B} or {R}.)" on dual lands) have it centered
+function centerRetroLandText(print) {
+	var rules = card.text.rules;
+	if (!rules) {
+		return;
+	}
+	if (!('defaultAlign' in rules)) {
+		rules.defaultAlign = rules.align || 'left';
+	}
+	var oracleText = (print.oracle_text || '').trim();
+	var retroLand = ['1993', '1997'].includes(print.frame) && (print.type_line || '').includes('Land');
+	rules.align = retroLand && oracleText != '' && !oracleText.includes('\n') ? 'center' : rules.defaultAlign;
+}
+//Fills the extra text boxes of special frame versions (second halves, flip sides, class levels, mutate...)
+function importSpecialTextBoxes(print, otherHalf, rulesText) {
+	var text = card.text;
+	//split, aftermath, adventure and flip cards: the second half
+	if (otherHalf) {
+		if (text.title2) { text.title2.text = curlyQuotes(otherHalf.name || ''); }
+		if (text.mana2) { text.mana2.text = otherHalf.mana_cost || ''; }
+		if (text.type2) { text.type2.text = otherHalf.type_line || ''; }
+		if (text.rules2) { text.rules2.text = formatImportedRulesText(otherHalf.oracle_text); }
+		if (text.pt2) { text.pt2.text = otherHalf.power != undefined ? otherHalf.power + '/' + otherHalf.toughness : ''; }
+		if (print.layout == 'adventure' && text.rules && text.rules2) {
+			//adventure frames: the adventure's text is on the left page, the creature's on the right one
+			[text.rules.text, text.rules2.text] = [text.rules2.text, text.rules.text];
+		}
+	}
+	//transforming cards and battles: the back face's power/toughness, in gray on the front
+	if (text.reminder && text.reminder.name == 'Reverse PT' && print.sibling_faces && print.face_index == 0) {
+		var backFace = print.sibling_faces[1] || {};
+		text.reminder.text = backFace.power != undefined ? backFace.power + '/' + backFace.toughness : '';
+	}
+	//modal double faced cards: the other face, shown at the bottom
+	if (text.flipsideType && print.sibling_faces) {
+		var otherFace = print.sibling_faces[print.face_index == 1 ? 0 : 1] || {};
+		var otherType = (otherFace.type_line || '').split(' — ')[0].split(' ').pop();
+		text.flipsideType.text = otherType;
+		if (text.flipSideReminder) {
+			text.flipSideReminder.text = otherType == 'Land' ? (otherFace.oracle_text || '').split('\n').find(line => line.includes('{T}: Add')) || '' : (otherFace.mana_cost || '');
+		}
+	}
+	//mutate: the "Mutate {cost}" line has its own box
+	if (text.mutate) {
+		var mutateLine = (print.oracle_text || '').split('\n').find(line => line.startsWith('Mutate '));
+		text.mutate.text = mutateLine ? formatImportedRulesText(mutateLine) : '';
+		if (mutateLine && text.rules) {
+			text.rules.text = text.rules.text.replace(formatImportedRulesText(mutateLine) + '\n', '');
+		}
+	}
+	//class: "{cost}: Level N" lines split the levels
+	if (text.level0c) {
+		var levels = [[]];
+		var levelHeaders = [];
+		(print.oracle_text || '').split('\n').forEach(line => {
+			var header = line.match(/^(.+): Level (\d+)$/);
+			if (header) {
+				levelHeaders.push(header);
+				levels.push([]);
+			} else {
+				levels[levels.length - 1].push(line);
+			}
+		});
+		for (var i = 0; i < 4; i ++) {
+			text['level' + i + 'c'].text = levels[i] ? formatImportedRulesText(levels[i].join('\n')) : '';
+			if (i > 0) {
+				text['level' + i + 'a'].text = levelHeaders[i - 1] ? levelHeaders[i - 1][1] + ':' : '';
+				text['level' + i + 'b'].text = levelHeaders[i - 1] ? 'Level ' + levelHeaders[i - 1][2] : '';
+			}
+			var classHeight = document.querySelector('#class-height-' + i);
+			if (classHeight) {
+				classHeight.value = levels[i] ? Math.round(scaleHeight(card.text.type.y - card.text.level0c.y) / levels.length) - (i > 0 ? Math.round(scaleHeight(0.0361)) : 0) : 0;
+			}
+		}
+		if (typeof classEdited == 'function') { classEdited(); }
+	}
+}
+async function changeCardIndex() {
 	var cardToImport = scryfallCard[document.querySelector('#import-index').value];
+	var replicatePrint = document.querySelector('#autoFrame').value == 'FromPrint';
+	//split, adventure, aftermath and flip cards show both halves on one card: always start from the first half
+	var otherHalf = null;
+	if (replicatePrint && ['split', 'adventure', 'flip'].includes(cardToImport.layout) && cardToImport.sibling_faces) {
+		cardToImport = Object.assign({}, cardToImport, cardToImport.sibling_faces[0], {face_index: 0});
+		otherHalf = cardToImport.sibling_faces[1];
+	}
+	autoFramePrint = cardToImport;
+	autoFramePrintNotice = '';
+	if (replicatePrint) {
+		await setCollectorStyleForPrint(cardToImport);
+		//load the frame pack (and its text boxes) of this print before filling in the text
+		var printPlan = autoFrameStyleFromPrint(cardToImport);
+		var printPack = printPlan.pack || printPlan.style;
+		if (printPack && printPack != autoFramePack && await loadFramePackForAutoFrame(printPack)) {
+			autoFramePack = printPack;
+		}
+		//start from empty text boxes, so nothing from the previous card stays behind in boxes this print doesn't use
+		Object.values(card.text).forEach(textBox => textBox.text = '');
+	}
 	//text
 	var langFontCode = "";
 	if (cardToImport.lang == "ph") {langFontCode = "{fontphyrexian}"}
@@ -4798,13 +5586,7 @@ function changeCardIndex() {
 	if (card.text.mana) {card.text.mana.text = cardToImport.mana_cost || '';}
 	if (card.text.type) {card.text.type.text = langFontCode + cardToImport.type_line || '';}
 
-	var italicExemptions = ['Boast', 'Cycling', 'Visit', 'Prize', 'I', 'II', 'III', 'IV', 'I, II', 'II, III', 'III, IV', 'I, II, III', 'II, III, IV', 'I, II, III, IV', '• Khans', '• Dragons', '• Mirran', '• Phyrexian', 'Prototype', 'Companion', 'To solve', 'Solved'];
-	var rulesText = (cardToImport.oracle_text || '').replace(/(?:\((?:.*?)\)|[^"\n]+(?= — ))/g, function(a){
-	    if (italicExemptions.includes(a) || (cardToImport.keywords && cardToImport.keywords.indexOf('Spree') != -1 && a.startsWith('+'))) {return a;}
-	    return '{i}' + a + '{/i}';
-	});
-	rulesText = curlyQuotes(rulesText).replace(/{Q}/g, '{untap}').replace(/{\u221E}/g, "{inf}").replace(/• /g, '• {indent}');
-	rulesText = rulesText.replace('(If this card is your chosen companion, you may put it into your hand from outside the game for {3} any time you could cast a sorcery.)', '(If this card is your chosen companion, you may put it into your hand from outside the game for {3} as a sorcery.)')
+	var rulesText = formatImportedRulesText(cardToImport.oracle_text, cardToImport.keywords);
 
 	if (card.text.rules) {
 		if (card.version == 'pokemon') {
@@ -4920,9 +5702,17 @@ function changeCardIndex() {
 		}
 		planeswalkerEdited();
 	} else if (card.version.includes('saga')) {
-		card.text.ability0.text = cardToImport.oracle_text.replace('(', '{i}(').replace(')', '){/i}') || '';
+		if (replicatePrint && card.text.reminder && typeof sagaEdited == 'function') {
+			importSagaChapters(cardToImport.oracle_text || '');
+		} else {
+			card.text.ability0.text = cardToImport.oracle_text.replace('(', '{i}(').replace(')', '){/i}') || '';
+		}
 	} else if (card.version.includes('battle')) {
 		card.text.defense.text = cardToImport.defense || '';
+	}
+	if (replicatePrint) {
+		importSpecialTextBoxes(cardToImport, otherHalf, rulesText);
+		centerRetroLandText(cardToImport);
 	}
 	document.querySelector('#text-editor').value = card.text[Object.keys(card.text)[selectedTextIndex]].text;
 	document.querySelector('#text-editor-font-size').value = 0;
@@ -4932,15 +5722,34 @@ function changeCardIndex() {
 		});
 	textEdited();
 	//collector's info
-	if (localStorage.getItem('enableImportCollectorInfo') == 'true') {
-		document.querySelector('#info-number').value = cardToImport.collector_number || "";
+	var printSet = cardToImport.set || '';
+	var printNumber = cardToImport.collector_number || '';
+	var theListOriginal = replicatePrint ? theListOriginalPrint(cardToImport) : null;
+	if (theListOriginal) {
+		//The List cards show the set and number they were originally printed with
+		printSet = theListOriginal.set;
+		printNumber = theListOriginal.number;
+	}
+	if (replicatePrint) {
+		if (cardToImport.released_at) {
+			document.querySelector('#info-year').value = cardToImport.released_at.slice(0, 4); //copyright year of that print
+		}
+		document.querySelector('#info-note').value = cardToImport.story_spotlight ? 'Story Spotlight' : '';
+		applyPrintCopyrightLines(cardToImport);
+		bottomInfoEdited();
+	}
+	if (localStorage.getItem('enableImportCollectorInfo') == 'true' || replicatePrint) {
+		document.querySelector('#info-number').value = printNumber;
 		document.querySelector('#info-rarity').value = (cardToImport.rarity || "")[0].toUpperCase();
-		document.querySelector('#info-set').value = (cardToImport.set || "").toUpperCase();
+		document.querySelector('#info-set').value = printSet.toUpperCase();
 		document.querySelector('#info-language').value = (cardToImport.lang || "").toUpperCase();
 		var setXhttp = new XMLHttpRequest();
 		setXhttp.onreadystatechange = function() {
 			if (this.readyState == 4 && this.status == 200) {
 				var setObject = JSON.parse(this.responseText)
+				if (theListOriginal && setObject.released_at) {
+					document.querySelector('#info-year').value = setObject.released_at.slice(0, 4); //year of the original printing
+				}
 				if (document.querySelector('#enableNewCollectorStyle').checked) {
 					var number = document.querySelector('#info-number').value;
 
@@ -4974,23 +5783,24 @@ function changeCardIndex() {
 				}
 			}
 		}
-		setXhttp.open('GET', "https://api.scryfall.com/sets/" + cardToImport.set, true);
+		setXhttp.open('GET', "https://api.scryfall.com/sets/" + printSet, true);
 		try {
 			setXhttp.send();
 		} catch {
 			console.log('Scryfall API search failed.')
 		}
 	}
-	//art
-	document.querySelector('#art-name').value = cardToImport.name;
-	fetchScryfallData(cardToImport.name, artFromScryfall, 'art');
+	//art: always from the English prints (Scryfall keeps the best scans for English cards; other languages are often blurry)
+	var englishName = cardToImport.english_name || cardToImport.name;
+	document.querySelector('#art-name').value = englishName;
+	fetchScryfallData(englishName, artFromScryfall, 'art', 'en');
 	if (document.querySelector('#importAllPrints').checked) {
 		// document.querySelector('#art-index').value = document.querySelector('#import-index').value;
 		// changeArtIndex();
 	}
 	//set symbol
 	if (!document.querySelector('#lockSetSymbolCode').checked) {
-		document.querySelector('#set-symbol-code').value = cardToImport.set;
+		document.querySelector('#set-symbol-code').value = printSet;
 	}
 	document.querySelector('#set-symbol-rarity').value = cardToImport.rarity.slice(0, 1);
 	if (!document.querySelector('#lockSetSymbolURL').checked) {
@@ -5072,6 +5882,16 @@ async function loadCard(selectedCardKey) {
 		document.querySelector('#info-set').value = card.infoSet;
 		document.querySelector('#info-language').value = card.infoLanguage;
 		document.querySelector('#info-note').value = card.infoNote;
+		copyrightElement('info-copyright-x').value = card.infoCopyrightX || 0;
+		copyrightElement('info-copyright-y').value = card.infoCopyrightY || 0;
+		copyrightElement('info-artist-x').value = card.infoArtistX || 0;
+		copyrightElement('info-artist-y').value = card.infoArtistY || 0;
+		if (card.infoCopyright == null) {
+			delete copyrightElement('info-copyright').dataset.edited;
+		} else {
+			copyrightElement('info-copyright').dataset.edited = '1';
+			copyrightElement('info-copyright').value = card.infoCopyright;
+		}
 		document.querySelector('#info-year').value = card.infoYear || date.getFullYear();
 		artistEdited(card.infoArtist);
 		document.querySelector('#text-editor').value = card.text[Object.keys(card.text)[selectedTextIndex]].text;
@@ -5329,11 +6149,22 @@ function stretchSVGReal(data, frameObject) {
 }
 function processScryfallCard(card, responseCards) {
 	if ('card_faces' in card) {
-		card.card_faces.forEach(face => {
+		//copies of every face (text only), so a face can fill in the other half of split/adventure/flip/modal cards
+		var siblingFaces = card.card_faces.map(face => ({name: face.name, mana_cost: face.mana_cost, type_line: face.type_line, oracle_text: face.oracle_text, power: face.power, toughness: face.toughness, loyalty: face.loyalty, defense: face.defense, flavor_text: face.flavor_text}));
+		card.card_faces.forEach((face, faceIndex) => {
+			//print details live on the card, not on its faces: the auto frame needs them to replicate the print
+			['layout', 'frame', 'frame_effects', 'border_color', 'security_stamp', 'released_at', 'full_art', 'finishes', 'promo_types', 'keywords', 'illustration_id', 'artist', 'colors', 'story_spotlight', 'set_name'].forEach(key => {
+				if (!(key in face) && key in card) {
+					face[key] = card[key];
+				}
+			});
+			face.face_index = faceIndex;
+			face.sibling_faces = siblingFaces;
 			face.set = card.set;
 			face.rarity = card.rarity;
 			face.collector_number = card.collector_number;
 			face.lang = card.lang;
+			face.english_name = face.name; //the art is always searched in English
 			if (card.lang != 'en') {
 				face.oracle_text = face.printed_text;
 				face.name = face.printed_name;
@@ -5345,6 +6176,7 @@ function processScryfallCard(card, responseCards) {
 			}
 		});
 	} else {
+		card.english_name = card.name; //the art is always searched in English
 		if (card.lang != 'en') {
 			card.oracle_text = card.printed_text;
 			card.name = card.printed_name;
@@ -5399,7 +6231,7 @@ function fetchScryfallCardByCodeNumber(code, number, callback = console.log) {
 }
 
 //SCRYFALL STUFF MAY BE CHANGED IN THE FUTURE
-function fetchScryfallData(cardName, callback = console.log, unique = '') {
+function fetchScryfallData(cardName, callback = console.log, unique = '', language = null) {
 	var xhttp = new XMLHttpRequest();
 	xhttp.onreadystatechange = function() {
 		if (this.readyState == 4 && this.status == 200) {
@@ -5414,7 +6246,7 @@ function fetchScryfallData(cardName, callback = console.log, unique = '') {
 		}
 	}
 	cardLanguageSelect = document.querySelector('#import-language');
-	var cardLanguage = `lang%3D${cardLanguageSelect.value}`;
+	var cardLanguage = `lang%3D${language || cardLanguageSelect.value}`;
 	var uniqueArt = '';
 	if (unique) {
 		uniqueArt = '&unique=' + unique;
@@ -5513,6 +6345,9 @@ if (!localStorage.getItem('autoFit')) {
 if (!localStorage.getItem('lockSetSymbolCode')) {
 	localStorage.setItem('lockSetSymbolCode', '');
 }
+if (localStorage.getItem('set-symbol-source') == 'gatherer') {
+	localStorage.setItem('set-symbol-source', 'hexproof'); //the Gatherer symbol source no longer works
+}
 if (localStorage.getItem('set-symbol-source')) {
 	document.querySelector('#set-symbol-source').value = localStorage.getItem('set-symbol-source');
 }
@@ -5521,6 +6356,7 @@ if (document.querySelector('#lockSetSymbolCode').checked) {
 	document.querySelector('#set-symbol-code').value = localStorage.getItem('lockSetSymbolCode');
 	fetchSetSymbol();
 }
+loadSetSymbolPicker();
 
 // lock set symbol url (user defaults)
 if (!localStorage.getItem('lockSetSymbolURL')) {
