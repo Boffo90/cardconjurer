@@ -5422,6 +5422,36 @@ function scryfallCardFromText(text) {
   return cardObject;
 }
 
+//The text as printed on that card (Scryfall only has today's Oracle wording for English cards):
+//MTGJSON's set files keep each printing's "originalText" and "originalType", matched by Scryfall id
+var printedTextSets = new Map();
+function printedTextSet(setCode) {
+	var code = setCode.toUpperCase();
+	if (!printedTextSets.has(code)) {
+		var controller = new AbortController();
+		var timeout = setTimeout(() => controller.abort(), 15000);
+		printedTextSets.set(code, fetch(`https://mtgjson.com/api/v5/${encodeURIComponent(code)}.json`, {signal: controller.signal})
+			.then(response => response.ok ? response.json() : null)
+			.then(json => (json && json.data && json.data.cards || []).map(c => ({id: c.identifiers && c.identifiers.scryfallId, side: c.side, text: c.originalText, type: c.originalType})))
+			.catch(() => [])
+			.finally(() => clearTimeout(timeout)));
+	}
+	return printedTextSets.get(code);
+}
+async function printedTextOf(print) {
+	if (!print.id && !print.set) {
+		return null;
+	}
+	var cards = await printedTextSet(print.set);
+	var side = print.face_index == 1 ? 'b' : 'a';
+	var match = cards.find(c => c.id == print.id && (!c.side || c.side == side));
+	if (!match || !match.text) {
+		return null;
+	}
+	//MTGJSON writes the dash as " – "; cards (and the ability word italics) use " — "
+	var dashes = text => text.replace(/ – /g, ' — ');
+	return {oracle_text: dashes(match.text), type_line: match.type ? dashes(match.type) : print.type_line};
+}
 //Scryfall oracle text -> Card Conjurer text (italic reminder text and ability words, curly quotes, symbols)
 function formatImportedRulesText(oracleText, keywords) {
 	var italicExemptions = ['Boast', 'Cycling', 'Visit', 'Prize', 'I', 'II', 'III', 'IV', 'I, II', 'II, III', 'III, IV', 'I, II, III', 'II, III, IV', 'I, II, III, IV', '• Khans', '• Dragons', '• Mirran', '• Phyrexian', 'Prototype', 'Companion', 'To solve', 'Solved'];
@@ -5513,6 +5543,20 @@ function retroCopyrightLine(print) {
 	}
 	var prefix = released >= '2001-04-01' ? '™ & © ' : '©';
 	return {text: prefix + '1993–{elemidinfo-year} Wizards of the Coast, Inc. {elemidinfo-number}'};
+}
+//Text sizes measured on printed cards of that era (Prophecy, Mercadian Masques, Invasion): the frame's defaults run 4-9% large,
+//so lines broke earlier than on the real card. Our font is also ~6% wider than the one printed then, so the rules box
+//uses more of the light text box (it spans 0.107-0.896) to break lines where the printed card does
+var retroTextSizes = {title: {size: 0.039}, type: {size: 0.0307}, rules: {size: 0.0328, x: 0.115, width: 0.77}};
+function placeRetroTextSizes(print) {
+	if (!['1993', '1997'].includes(print.frame)) {
+		return;
+	}
+	Object.entries(retroTextSizes).forEach(([key, values]) => {
+		if (card.text[key]) {
+			Object.assign(card.text[key], values);
+		}
+	});
 }
 function placeRetroBottomLines(print) {
 	if (!card.bottomInfo || !card.bottomInfo.top || !card.bottomInfo.wizards || !['1993', '1997'].includes(print.frame)) {
@@ -5643,8 +5687,16 @@ async function changeCardIndex() {
 		}
 		//start from empty text boxes, so nothing from the previous card stays behind in boxes this print doesn't use
 		Object.values(card.text).forEach(textBox => textBox.text = '');
+		//English cards: the wording printed on that card instead of today's Oracle text
+		if ((cardToImport.lang || 'en') == 'en') {
+			var printedText = await printedTextOf(cardToImport);
+			if (printedText) {
+				cardToImport = Object.assign({}, cardToImport, printedText);
+			}
+		}
 		if (printPlan.style == 'Seventh') {
 			placeRetroBottomLines(cardToImport);
+			placeRetroTextSizes(cardToImport);
 		}
 	}
 	//text
@@ -6247,7 +6299,7 @@ function processScryfallCard(card, responseCards) {
 		var siblingFaces = card.card_faces.map(face => ({name: face.name, mana_cost: face.mana_cost, type_line: face.type_line, oracle_text: face.oracle_text, power: face.power, toughness: face.toughness, loyalty: face.loyalty, defense: face.defense, flavor_text: face.flavor_text}));
 		card.card_faces.forEach((face, faceIndex) => {
 			//print details live on the card, not on its faces: the auto frame needs them to replicate the print
-			['layout', 'frame', 'frame_effects', 'border_color', 'security_stamp', 'released_at', 'full_art', 'finishes', 'promo_types', 'keywords', 'illustration_id', 'artist', 'colors', 'story_spotlight', 'set_name'].forEach(key => {
+			['id', 'layout', 'frame', 'frame_effects', 'border_color', 'security_stamp', 'released_at', 'full_art', 'finishes', 'promo_types', 'keywords', 'illustration_id', 'artist', 'colors', 'story_spotlight', 'set_name'].forEach(key => {
 				if (!(key in face) && key in card) {
 					face[key] = card[key];
 				}
