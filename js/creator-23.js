@@ -5199,7 +5199,9 @@ async function loadBottomInfo(textObjects = []) {
 var bottomInfoRequest = 0;
 async function bottomInfoEdited() {
 	var request = ++bottomInfoRequest;
-	await loadFontsForText(Object.values(card.bottomInfo || {}));
+	//the bottom right text written in the Collector tab can switch fonts too ("{fontgothambold}mtgstory.com")
+	var copyrightInput = document.querySelector('#info-copyright');
+	await loadFontsForText(Object.values(card.bottomInfo || {}).concat(copyrightInput ? [{text: copyrightInput.value}] : []));
 	if (request != bottomInfoRequest) {
 		return; //a newer drawing started while the fonts were loading
 	}
@@ -5786,7 +5788,7 @@ function applyPrintCopyrightLines(print) {
 		}
 	}
 	if (print.story_spotlight) {
-		lines.push('mtgstory.com');
+		lines.push('{fontgothambold}mtgstory.com{fontmplantin}'); //printed in a bold sans serif, unlike the copyright lines
 	}
 	var copyrightField = copyrightElement('info-copyright');
 	if (lines.length && card.bottomInfo && card.bottomInfo.wizards) {
