@@ -4063,7 +4063,10 @@ function writeText(textObject, targetContext) {
 		splitText = splitText.replace(/{flavor}/g, '{i}').replace(/{oldflavor}/g, '{i}');
 	} else {
 		//flavorGap 0: the flavor text starts on the next line, with no space before it (the original 1993 frame)
-		splitText = splitText.replace(/{flavor}/g, '{/indent}{lns}{bar}{lns}{fixtextalign}{i}').replace(/{oldflavor}/g, textObject.flavorGap === 0 ? '{/indent}{lns}{i}' : '{/indent}{lns}{lns}{up30}{i}');
+		//flavorBar false: no bar between the rules and the flavor text, just a space 0.6 of the text size taller than a line (2015
+		//frame cards printed before Dominaria; measured on Dispel BFZ 76 and Deadeye Quartermaster XLN 50)
+		var flavorStart = textObject.flavorBar === false ? '{/indent}{lns}{down' + Math.round(startingTextSize * 0.6) + '}{fixtextalign}{i}' : '{/indent}{lns}{bar}{lns}{fixtextalign}{i}';
+		splitText = splitText.replace(/{flavor}/g, flavorStart).replace(/{oldflavor}/g, textObject.flavorGap === 0 ? '{/indent}{lns}{i}' : '{/indent}{lns}{lns}{up30}{i}');
 	}
 	splitText = splitText.replace(/{/g, splitString + '{').replace(/}/g, '}' + splitString).replace(/ /g, splitString + ' ' + splitString).split(splitString);
 
@@ -5961,6 +5964,9 @@ function placePrintedRulesSpacing(print) {
 		rules.defaultSpacing = Object.fromEntries(Object.keys(printedRulesSpacing).map(key => [key, rules[key]]));
 	}
 	Object.assign(rules, print.frame == '2015' ? printedRulesSpacing : rules.defaultSpacing);
+	//the bar between the rules and the flavor text first appeared on Dominaria (April 2018): Rivals of Ixalan and Masters 25 have
+	//none, every set from Dominaria on has it (checked on three to four cards of each set from Khans of Tarkir to Dominaria United)
+	rules.flavorBar = print.frame == '2015' && (print.released_at || '9999') < '2018-04-27' ? false : undefined;
 }
 //White bordered 8th and 9th Edition prints have the artist and copyright lines on the border, in black instead of white
 //(older frames print them on the frame, in white). The frame's own colors are kept aside: the frame isn't reloaded between
