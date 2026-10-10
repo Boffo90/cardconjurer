@@ -5020,22 +5020,34 @@ function resetSetSymbol() {
 	}
 	document.querySelector('#setSymbol-x').value = Math.round(scaleX(card.setSymbolBounds.x));
 	document.querySelector('#setSymbol-y').value = Math.round(scaleY(card.setSymbolBounds.y));
+	//the symbol itself, without the empty margin some symbol files have (the local ones are 300x300 squares: 2X2's wide symbol
+	//fills 69% of the height, so it came out much smaller than printed)
+	var visible = visibleBoxOf(setSymbol);
+	var symbolWidth = setSymbol.width * (visible.right - visible.left);
+	var symbolHeight = setSymbol.height * (visible.bottom - visible.top);
 	var setSymbolZoom;
-	if (setSymbol.width / setSymbol.height > scaleWidth(card.setSymbolBounds.width) / scaleHeight(card.setSymbolBounds.height)) {
-		setSymbolZoom = (scaleWidth(card.setSymbolBounds.width) / setSymbol.width * 100).toFixed(1);
+	if (symbolWidth / symbolHeight > scaleWidth(card.setSymbolBounds.width) / scaleHeight(card.setSymbolBounds.height)) {
+		setSymbolZoom = (scaleWidth(card.setSymbolBounds.width) / symbolWidth * 100).toFixed(1);
 	} else {
-		setSymbolZoom = (scaleHeight(card.setSymbolBounds.height) / setSymbol.height * 100).toFixed(1);
+		setSymbolZoom = (scaleHeight(card.setSymbolBounds.height) / symbolHeight * 100).toFixed(1);
 	}
 	document.querySelector('#setSymbol-zoom').value = setSymbolZoom;
+	var zoom = setSymbolZoom / 100;
+	//where the image goes so that its visible part lands in the bounds
+	var marginLeft = setSymbol.width * visible.left * zoom, marginTop = setSymbol.height * visible.top * zoom;
 	if (card.setSymbolBounds.horizontal == 'center') {
-		document.querySelector('#setSymbol-x').value = Math.round(scaleX(card.setSymbolBounds.x) - (setSymbol.width * setSymbolZoom / 100) / 2 - scaleWidth(card.marginX));
+		document.querySelector('#setSymbol-x').value = Math.round(scaleX(card.setSymbolBounds.x) - (symbolWidth * zoom) / 2 - marginLeft - scaleWidth(card.marginX));
 	} else if (card.setSymbolBounds.horizontal == 'right') {
-		document.querySelector('#setSymbol-x').value = Math.round(scaleX(card.setSymbolBounds.x) - (setSymbol.width * setSymbolZoom / 100) - scaleWidth(card.marginX));
+		document.querySelector('#setSymbol-x').value = Math.round(scaleX(card.setSymbolBounds.x) - (symbolWidth * zoom) - marginLeft - scaleWidth(card.marginX));
+	} else {
+		document.querySelector('#setSymbol-x').value = Math.round(scaleX(card.setSymbolBounds.x) - marginLeft);
 	}
 	if (card.setSymbolBounds.vertical == 'center') {
-		document.querySelector('#setSymbol-y').value = Math.round(scaleY(card.setSymbolBounds.y) - (setSymbol.height * setSymbolZoom / 100) / 2 - scaleHeight(card.marginY));
+		document.querySelector('#setSymbol-y').value = Math.round(scaleY(card.setSymbolBounds.y) - (symbolHeight * zoom) / 2 - marginTop - scaleHeight(card.marginY));
 	} else if (card.setSymbolBounds.vertical == 'bottom') {
-		document.querySelector('#setSymbol-y').value = Math.round(scaleY(card.setSymbolBounds.y) - (setSymbol.height * setSymbolZoom / 100) - scaleHeight(card.marginY));
+		document.querySelector('#setSymbol-y').value = Math.round(scaleY(card.setSymbolBounds.y) - (symbolHeight * zoom) - marginTop - scaleHeight(card.marginY));
+	} else {
+		document.querySelector('#setSymbol-y').value = Math.round(scaleY(card.setSymbolBounds.y) - marginTop);
 	}
 	setSymbolEdited();
 }
