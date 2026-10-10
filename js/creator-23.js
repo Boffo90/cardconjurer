@@ -408,7 +408,7 @@ function drawFrames() {
 			}
 			var bounds = item.bounds || {};
 			var ogBounds = item.ogBounds || bounds;
-			var itemImage = stampWithScan(item) || item.image; //holo stamps with a scanned foil (local_art/stamps)
+			var itemImage = stampWithScan(item) || adjustedFrameImage(item) || item.image; //scanned holo stamps (local_art/stamps), printed colors
 			frameX = Math.round(scaleX(bounds.x || 0));
 			frameY = Math.round(scaleY(bounds.y || 0));
 			frameWidth = Math.round(scaleWidth(bounds.width || 1));
@@ -3461,6 +3461,110 @@ function makePhyrexianFrameByLetter(letter, mask = false, maskToRightHalf = fals
 
 	return frame;
 }
+//The 1997 frame's black frame as printed, measured on Aku Djinn (VIS), Blood Vassal (USG) and Abandon Hope (TMP): the bubbled
+//frame is a greenish dark gray (36,40,34; ours was a reddish 22,16,16), the parchment more orange and darker (219,170,126 against
+//231,197,143) and the border not pure black (24,21,16). Each channel becomes value * scale + offset
+var seventhBlackColors = {
+	frame: {scale: [1.69, 1.61, 1.61], offset: [-1, 14, 8]},
+	//the parchment's mask also covers the dark frame around its burned edges: those pixels take the frame's colors, so there's no
+	//black rim between the two (from the frame's colors below a brightness of 40 to the parchment's above 110)
+	parchment: {scale: [0.948, 0.863, 0.88], offset: [0, 0, 0], dark: {scale: [1.69, 1.61, 1.61], offset: [-1, 14, 8]}, darkBelow: 40, lightAbove: 110},
+	border: {scale: [1, 1, 1], offset: [24, 21, 16]}
+};
+//The other colors of the 1997 frame as printed, from three printed cards of each (Weatherlight to Invasion): the text boxes run
+//5-28% darker than ours (red, green and gold the most), the frames lighter in their dark parts and lower in contrast. Frames match
+//the cards' middle tone with their contrast changed by at most 30%; text boxes are scaled, so dark details keep their place
+var seventhFrameColors = {
+	W: {frame: {scale: [0.7, 0.7, 0.7], offset: [57, 47, 29]}, box: {scale: [0.959, 0.939, 0.947], offset: [0, 0, 0]}},
+	U: {frame: {scale: [0.7, 0.7, 0.7], offset: [34, 55, 50]}, box: {scale: [0.903, 0.917, 0.901], offset: [0, 0, 0]}},
+	R: {frame: {scale: [0.7, 0.7, 0.79], offset: [26, 10, 13]}, box: {scale: [0.785, 0.723, 0.771], offset: [0, 0, 0]}},
+	G: {frame: {scale: [0.7, 0.7, 0.9], offset: [14, 31, 22]}, box: {scale: [0.79, 0.783, 0.872], offset: [0, 0, 0]}},
+	M: {frame: {scale: [0.7, 0.7, 0.7], offset: [14, 2, -3]}, box: {scale: [0.857, 0.773, 0.688], offset: [0, 0, 0]}},
+	A: {frame: {scale: [0.73, 0.74, 0.85], offset: [20, 11, 4]}, box: {scale: [0.876, 0.844, 0.794], offset: [0, 0, 0]}},
+	//lands, from 19 printed nonbasic lands (Mirage to Onslaught): their brown frame is much lighter than ours (114,96,77 against
+	//66,53,40); a colored land's text box (and lines) comes from its color's land image, and only its box changes
+	L: {frame: {scale: [0.7, 0.75, 1.18], offset: [68, 56, 30]}, box: {scale: [0.89, 0.99, 1.16], offset: [0, 0, 0]}},
+	WL: {frame: null, box: {scale: [0.917, 0.901, 0.866], offset: [0, 0, 0]}},
+	UL: {frame: null, box: {scale: [0.924, 0.885, 0.876], offset: [0, 0, 0]}},
+	BL: {frame: null, box: {scale: [0.942, 0.944, 0.89], offset: [0, 0, 0]}},
+	RL: {frame: null, box: {scale: [0.924, 0.928, 0.903], offset: [0, 0, 0]}},
+	GL: {frame: null, box: {scale: [0.888, 0.87, 0.84], offset: [0, 0, 0]}}
+};
+var seventhOriginalColors = Object.assign({border: seventhBlackColors.border, B: {frame: seventhBlackColors.frame, box: seventhBlackColors.parchment}}, seventhFrameColors);
+//The retro frame reprints (2021 on), from 29 printed cards of Time Spiral Remastered, Modern Horizons 2 and 3, The Brothers' War
+//Commander, Dominaria Remastered and Ravnica Remastered, plus 33 nonbasic lands of 2021-2026. Their frames are lighter than the
+//original prints' and their colorless lands' boxes pink-orange instead of gold
+var seventhRetroBlackFrame = {scale: [1.3, 1.3, 1.3], offset: [19, 21, 9]};
+var seventhRetroColors = {
+	border: {scale: [1, 1, 1], offset: [22, 19, 14]},
+	W: {frame: {scale: [0.7, 0.7, 0.7], offset: [84, 83, 77]}, box: {scale: [1.042, 1.037, 1.084], offset: [0, 0, 0]}},
+	U: {frame: {scale: [0.7, 0.7, 0.818], offset: [34, 53, 20]}, box: {scale: [0.949, 0.952, 0.967], offset: [0, 0, 0]}},
+	B: {frame: seventhRetroBlackFrame, box: {scale: [0.982, 0.948, 0.932], offset: [0, 0, 0], dark: seventhRetroBlackFrame, darkBelow: 40, lightAbove: 110}},
+	R: {frame: {scale: [0.838, 0.7, 0.7], offset: [19, 18, 14]}, box: {scale: [0.904, 0.891, 0.944], offset: [0, 0, 0]}},
+	G: {frame: {scale: [0.7, 0.7, 0.7], offset: [27, 25, 19]}, box: {scale: [0.989, 1.003, 1.032], offset: [0, 0, 0]}},
+	M: {frame: {scale: [0.877, 0.899, 0.958], offset: [40, 31, 20]}, box: {scale: [1.037, 1.045, 1.071], offset: [0, 0, 0]}},
+	A: {frame: {scale: [0.7, 0.7, 0.7], offset: [30, 23, 18]}, box: {scale: [0.967, 0.96, 0.954], offset: [0, 0, 0]}},
+	L: {frame: {scale: [0.7, 0.7, 0.735], offset: [71, 51, 36]}, box: {scale: [0.936, 0.937, 1.031], offset: [0, 0, 0]}},
+	WL: {frame: null, box: {scale: [0.923, 1.031, 1.086], offset: [0, 0, 0]}},
+	UL: {frame: null, box: {scale: [0.903, 0.839, 0.85], offset: [0, 0, 0]}},
+	BL: {frame: null, box: {scale: [0.949, 0.966, 1.033], offset: [0, 0, 0]}},
+	RL: {frame: null, box: {scale: [0.838, 0.923, 0.937], offset: [0, 0, 0]}}
+};
+//Sets whose prints differ from the rest of their era: The Brothers' War Commander's lands are mauve with peach pinlines instead of
+//gold ones (seven printed lands), Time Spiral Remastered's colorless lands (the first retro set) light brown with a gold box like
+//Card Conjurer's
+var brcLandPinlines = {scale: [1, 1, 1], offset: [-10, -1, 60]};
+var seventhSetColors = {
+	brc: {L: {
+		frame: {scale: [0.7, 0.7, 0.7], offset: [55, 38, 45], gold: brcLandPinlines, goldBelow: 160, goldAbove: 200},
+		box: {scale: [0.911, 0.898, 1.109], offset: [0, 0, 0], gold: brcLandPinlines, goldBelow: 160, goldAbove: 200}
+	}},
+	tsr: {L: {frame: {scale: [0.7, 0.7, 0.819], offset: [81, 66, 40]}, box: null}}
+};
+//A frame image with its rgbAdjust applied (computed once per image and adjustment), or null when the frame has none
+function adjustedFrameImage(frame) {
+	var image = frame.image;
+	if (!frame.rgbAdjust || !image || !image.complete || !image.naturalWidth) {
+		return null;
+	}
+	var key = image.src + JSON.stringify(frame.rgbAdjust);
+	if (image.adjusted && image.adjusted.key == key) {
+		return image.adjusted.canvas;
+	}
+	var canvas = document.createElement('canvas');
+	canvas.width = image.naturalWidth;
+	canvas.height = image.naturalHeight;
+	var context = canvas.getContext('2d');
+	context.drawImage(image, 0, 0);
+	try {
+		var data = context.getImageData(0, 0, canvas.width, canvas.height);
+		var pixels = data.data, adjust = frame.rgbAdjust, scale = adjust.scale, offset = adjust.offset, dark = adjust.dark;
+		for (var i = 0; i < pixels.length; i += 4) {
+			//share of the light adjustment: 1, unless the adjustment has a different one for dark pixels
+			var light = 1;
+			if (dark) {
+				var brightness = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+				light = Math.min(1, Math.max(0, (brightness - adjust.darkBelow) / (adjust.lightAbove - adjust.darkBelow)));
+			}
+			//share of the gold adjustment, when the adjustment has one for the gold pinlines (told apart by red far above blue)
+			var golden = 0;
+			if (adjust.gold) {
+				golden = Math.min(1, Math.max(0, (pixels[i] - pixels[i + 2] - adjust.goldBelow) / (adjust.goldAbove - adjust.goldBelow)));
+			}
+			for (var channel = 0; channel < 3; channel ++) {
+				var value = pixels[i + channel];
+				var lightValue = value * scale[channel] + offset[channel];
+				var adjusted = dark ? lightValue * light + (value * dark.scale[channel] + dark.offset[channel]) * (1 - light) : lightValue;
+				pixels[i + channel] = golden ? adjusted * (1 - golden) + (value * adjust.gold.scale[channel] + adjust.gold.offset[channel]) * golden : adjusted;
+			}
+		}
+		context.putImageData(data, 0, 0);
+	} catch (error) {
+		return null;
+	}
+	image.adjusted = {key: key, canvas: canvas};
+	return canvas;
+}
 function makeSeventhEditionFrameByLetter(letter, mask = false, maskToRightHalf = false) {
 	letter = letter.toUpperCase();
 	var frameNames = {
@@ -3495,6 +3599,20 @@ function makeSeventhEditionFrameByLetter(letter, mask = false, maskToRightHalf =
 		'name': frameName + ' Frame',
 		'src': '/img/frames/seventh/regular/' + letter.toLowerCase() + '.png'
 	};
+	//colors as printed: the original prints (1996-2003, see seventhBlackColors and seventhFrameColors) and the retro frame reprints
+	//from 2021 on (Time Spiral Remastered, Modern Horizons 2, The Brothers' War Commander...: see seventhRetroColors), which
+	//WotC redrew with another palette. Custom cards (no imported print) take the original prints' colors
+	var replicated = document.querySelector('#autoFrame').value == 'FromPrint' && autoFramePrint;
+	var palette = replicated && (autoFramePrint.released_at || '') >= '2004-01-01' ? seventhRetroColors : seventhOriginalColors;
+	var piece = mask == 'Border' ? 'border' : mask == 'Rules' ? 'box' : 'frame';
+	var adjust = piece == 'border' ? palette.border : (palette[letter] || {})[piece];
+	var setColors = replicated && (seventhSetColors[autoFramePrint.set] || {})[letter];
+	if (setColors && piece in setColors) {
+		adjust = setColors[piece];
+	}
+	if (adjust) {
+		frame.rgbAdjust = adjust;
+	}
 
 	if (mask) {
 		if (mask == 'Textbox Pinline') {
@@ -3940,6 +4058,12 @@ function typeWidthBesideSetSymbol(textX, textY, textWidth, textHeight) {
 	}
 	return Math.max(symbolLeft - textX - scaleWidth(0.01), textWidth / 2);
 }
+//Fonts for the characters the card fonts don't have (Japanese, Chinese, Korean): one serif (Mincho/Song/Myeongjo) family like
+//printed cards, instead of whatever the browser picks for each character
+var cjkFontFallback = ', "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "MS PMincho", "Noto Serif CJK JP", "SimSun", "Batang", serif';
+//Japanese and Chinese characters (kana, CJK ideographs, full width forms), and those a line can't start with
+var cjkCharacters = '　-ヿ㐀-䶿一-鿿豈-﫿＀-￯';
+var cjkNoLineStart = '、。，．）」』】？！：；ーぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ・';
 //Fonts without accented letters (the browser would draw "ó" in another, larger font): those letters are written as the plain
 //letter in the font plus its accent mark centered over it, raised on capitals ({accent´}, {capaccent´})
 var accentFreeFonts = ['goudymedieval'];
@@ -4087,6 +4211,9 @@ function writeText(textObject, targetContext) {
 		var flavorStart = textObject.flavorBar === false ? '{/indent}{lns}{down' + Math.round(startingTextSize * 0.6) + '}{fixtextalign}{i}' : '{/indent}{lns}{bar}{lns}{fixtextalign}{i}';
 		splitText = splitText.replace(/{flavor}/g, flavorStart).replace(/{oldflavor}/g, textObject.flavorGap === 0 ? '{/indent}{lns}{i}' : '{/indent}{lns}{lns}{up30}{i}');
 	}
+	//Japanese and Chinese have no spaces: a line can break after any of their characters, except before closing punctuation,
+	//the long vowel mark and small kana (kinsoku), which stay with the character before them
+	splitText = splitText.replace(new RegExp('([' + cjkCharacters + '])(?![' + cjkNoLineStart + '])', 'g'), '$1' + splitString);
 	splitText = splitText.replace(/{/g, splitString + '{').replace(/}/g, '}' + splitString).replace(/ /g, splitString + ' ' + splitString).split(splitString);
 
 	splitText = splitText.filter(item => item);
@@ -4122,12 +4249,13 @@ function writeText(textObject, targetContext) {
 	//Width of what is glued to a token, up to the next space: a mana symbol and the quote or comma around it ("“{2},")
 	//go to the next line together, like on printed cards
 	var gluedBreakCodes = ['line', 'lns', 'linenospace', 'bar', 'flavor', 'oldflavor', 'indent', '/indent', 'divider'];
+	var cjkToken = new RegExp('^[' + cjkCharacters + ']');
 	function gluedWidth(index) {
 		var width = 0;
 		for (var next = index + 1; next < splitText.length; next ++) {
 			var token = splitText[next];
-			if (token == ' ' || token == '') {
-				break;
+			if (token == ' ' || token == '' || cjkToken.test(token)) {
+				break; //a space, or a Japanese/Chinese character (a line can break before it)
 			}
 			if (token.startsWith('{') && token.endsWith('}')) {
 				var code = token.slice(1, -1).toLowerCase();
@@ -4200,7 +4328,7 @@ function writeText(textObject, targetContext) {
 		// 	lineCanvas.style.letterSpacing = '3.5px';
 		// }
 		textSize += parseInt(textObject.fontSize || '0');
-		lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension;
+		lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension + cjkFontFallback;
 		lineContext.fillStyle = textColor;
 		lineContext.shadowColor = textShadowColor;
 		lineContext.shadowOffsetX = textShadowOffsetX;
@@ -4266,25 +4394,25 @@ function writeText(textObject, targetContext) {
 						textFontExtension = '';
 						if (!textFontStyle.includes('italic')) {textFontStyle += 'italic ';}
 					}
-					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension;
+					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension + cjkFontFallback;
 				} else if (possibleCode == '/i') {
 					textFontExtension = '';
 					textFontStyle = textFontStyle.replace('italic ', '');
-					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension;
+					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension + cjkFontFallback;
 				} else if (possibleCode == 'bold') {
 					if (textFont == 'gillsans') {
 						textFontExtension = 'bold';
 					} else {
 						if (!textFontStyle.includes('bold')) {textFontStyle += 'bold ';}
 					}
-					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension;
+					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension + cjkFontFallback;
 				} else if (possibleCode == '/bold') {
 					if (textFont == 'gillsans') {
 						textFontExtension = '';
 					} else {
 						textFontStyle = textFontStyle.replace('bold ', '');
 					}
-					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension;
+					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension + cjkFontFallback;
 				} else if (possibleCode == 'left') {
 					textAlign = 'left';
 				} else if (possibleCode == 'center') {
@@ -4315,7 +4443,7 @@ function writeText(textObject, targetContext) {
 					} else {
 						textSize += parseInt(possibleCode.replace('fontsize', '')) || 0;
 					}
-					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension;
+					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension + cjkFontFallback;
 				} else if (possibleCode.includes('font') || savedFont) {
 					textFont = word.replace('{font', '').replace('}', '');
 					if (savedFont) {
@@ -4324,7 +4452,7 @@ function writeText(textObject, targetContext) {
 					}
 					textFontExtension = '';
 					textFontStyle = '';
-					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension;
+					lineContext.font = textFontStyle + textSize + 'px ' + textFont + textFontExtension + cjkFontFallback;
 					savedFont = null;
 				} else if (possibleCode.includes('outlinecolor')) {
 					lineContext.strokeStyle = possibleCode.replace('outlinecolor', '');
@@ -4524,7 +4652,7 @@ function writeText(textObject, targetContext) {
 				}
 			}
 
-			if (wordToWrite && lineContext.font.endsWith('belerenb')) {
+			if (wordToWrite && (textFont + textFontExtension) == 'belerenb') {
 				wordToWrite = wordToWrite.replace(/f(?:\s|$)/g, '\ue006').replace(/h(?:\s|$)/g, '\ue007').replace(/m(?:\s|$)/g, '\ue008').replace(/n(?:\s|$)/g, '\ue009').replace(/k(?:\s|$)/g, '\ue00a');
 			}
 
@@ -5942,6 +6070,8 @@ function applyLearnedPrintedText(print, replicatePrint) {
 		if (learned.title != null && card.text.title) { card.text.title.text = learned.title; }
 		if (learned.type != null && card.text.type) { card.text.type.text = learned.type; }
 		if (learned.rules != null && card.text.rules) { card.text.rules.text = learned.rules; }
+	} else if (replicatePrint && print.printed_name_source == 'translation') {
+		notify(`Auto frame: Scryfall and MTGJSON don't have this card's name in ${(print.lang || '').toUpperCase()}: it was translated automatically (Google)${print.printed_text_source == 'translation' ? ', and so was its text' : ''}, so it may not be the printed name. Correct it in the Text tab if needed and press "Remember for this print".`, 10);
 	} else if (replicatePrint && print.missing_printed_text) {
 		var language = (print.lang || '').toUpperCase();
 		if (print.printed_text_source == 'translation') {
@@ -6107,7 +6237,9 @@ function placeRetroBottomLines(print) {
 	var topText = 'defaultText' in top ? top.defaultText : top.text;
 	var topX = 'defaultX' in top ? top.defaultX : top.x;
 	var artistLine = copyright.artistLine || lines.artist;
-	card.bottomInfo.top = Object.assign({}, top, {x: artistLine.x || topX, y: artistLine.y, size: artistLine.size, height: artistLine.size, printPosition: true, defaultAlign: topDefault, defaultText: topText, defaultX: topX, text: copyright.artist || topText});
+	//Japanese prints write "イラスト：" instead of "Illus." (Visions' Vampiric Tutor); the copyright line stays in English
+	var artistText = (copyright.artist || topText).replace(/^Illus\. /, print.lang == 'ja' ? 'イラスト：' : 'Illus. ');
+	card.bottomInfo.top = Object.assign({}, top, {x: artistLine.x || topX, y: artistLine.y, size: artistLine.size, height: artistLine.size, printPosition: true, defaultAlign: topDefault, defaultText: topText, defaultX: topX, text: artistText});
 	card.bottomInfo.top.align = alignOf(card.bottomInfo.top);
 	//the copyright line is black on the lighter frames (the artist line stays white): white, blue and red on the original frame
 	//(4th Edition, Ice Age, Chronicles), white and red on the 1997 frame (Mirage, Tempest, 5th Edition)
@@ -6117,6 +6249,14 @@ function placeRetroBottomLines(print) {
 	var blackCopyright = (print.released_at || '') < '2003-07-01' && (print.frame == '1993' ? ['W', 'U', 'R'] : ['W', 'R']).includes(frameColor);
 	card.bottomInfo.wizards = Object.assign({}, wizards, {y: lines.wizards.y, size: lines.wizards.size, height: lines.wizards.size, text: copyright.text, defaultAlign: wizardsDefault, printLook: blackCopyright ? {color: 'black', shadowX: 0, shadowY: 0} : null});
 	card.bottomInfo.wizards.align = alignOf(card.bottomInfo.wizards);
+}
+//The copyright year printed on a set's cards: its release year, except for the sets printed the year before their release.
+//Checked on printed cards of the sets released in January to March from 5th Edition to Kamigawa: Neon Dynasty, and most others
+//up to 2003:
+//only Visions (February 1997) prints ©1996
+var copyrightYearBySet = {vis: '1996'};
+function printedCopyrightYear(setCode, releasedAt) {
+	return copyrightYearBySet[(setCode || '').toLowerCase()] || (releasedAt || '').slice(0, 4);
 }
 //The first core sets have no expansion symbol (Scryfall shows one of its own for them)
 var setsPrintedWithoutSymbol = ['lea', 'leb', '2ed', 'ced', 'cei', '3ed', 'fbb', 'sum'];
@@ -6147,7 +6287,10 @@ function centerRetroLandText(print) {
 	var retroLand = ['1993', '1997'].includes(print.frame) && (print.english_type_line || print.type_line || '').includes('Land');
 	//the first core sets (Alpha to 4th Edition) center rules text that has no flavor text (expansions keep it on the left)
 	var earlyCoreSet = ['lea', 'leb', '2ed', 'ced', 'cei', '3ed', 'sum', '4ed'].includes((print.set || '').toLowerCase()) && !print.flavor_text;
-	rules.align = oracleText != '' && (earlyCoreSet || (retroLand && !oracleText.includes('\n'))) ? 'center' : rules.defaultAlign;
+	//lands centered: only text that is just a reminder in parentheses, like the dual lands' "({T}: Add {B} or {R}.)" (Evolving Wilds'
+	//one line of rules stays on the left)
+	var reminderOnly = /^\([^()]*\)$/.test(oracleText);
+	rules.align = oracleText != '' && (earlyCoreSet || (retroLand && reminderOnly)) ? 'center' : rules.defaultAlign;
 }
 //Fills the extra text boxes of special frame versions (second halves, flip sides, class levels, mutate...)
 function importSpecialTextBoxes(print, otherHalf, rulesText) {
@@ -6261,6 +6404,15 @@ async function changeCardIndex() {
 	if (replicatePrint && ['split', 'adventure', 'flip'].includes(cardToImport.layout) && cardToImport.sibling_faces) {
 		cardToImport = Object.assign({}, cardToImport, cardToImport.sibling_faces[0], {face_index: 0});
 		otherHalf = cardToImport.sibling_faces[1];
+	}
+	if (cardToImport.missing_printed_name && !cardToImport.printed_name_source) {
+		var languageName = await printedNameOf(cardToImport);
+		if (languageName) {
+			cardToImport.name = languageName.name;
+			cardToImport.printed_name_source = languageName.source;
+		} else {
+			cardToImport.printed_name_source = 'english';
+		}
 	}
 	if (cardToImport.missing_printed_type_line) {
 		cardToImport.type_line = await printedTypeLineOf(cardToImport);
@@ -6496,7 +6648,7 @@ async function changeCardIndex() {
 	}
 	if (replicatePrint) {
 		if (cardToImport.released_at) {
-			document.querySelector('#info-year').value = cardToImport.released_at.slice(0, 4); //copyright year of that print
+			document.querySelector('#info-year').value = printedCopyrightYear(cardToImport.set, cardToImport.released_at); //copyright year of that print
 		}
 		document.querySelector('#info-note').value = cardToImport.story_spotlight ? 'Story Spotlight' : '';
 		applyPrintCopyrightLines(cardToImport);
@@ -6512,7 +6664,7 @@ async function changeCardIndex() {
 			if (this.readyState == 4 && this.status == 200) {
 				var setObject = JSON.parse(this.responseText)
 				if (theListOriginal && setObject.released_at) {
-					document.querySelector('#info-year').value = setObject.released_at.slice(0, 4); //year of the original printing
+					document.querySelector('#info-year').value = printedCopyrightYear(setObject.code, setObject.released_at); //year of the original printing
 				}
 				if (document.querySelector('#enableNewCollectorStyle').checked) {
 					var number = document.querySelector('#info-number').value;
@@ -6577,6 +6729,10 @@ async function changeCardIndex() {
 		document.querySelector('#set-symbol-code').value = printSet;
 	}
 	document.querySelector('#set-symbol-rarity').value = cardToImport.rarity.slice(0, 1);
+	if (replicatePrint && (cardToImport.released_at || '9999') < '1998-06-15') {
+		//before Exodus, set symbols were printed black whatever the rarity (Visions' "V" on a rare Vampiric Tutor)
+		document.querySelector('#set-symbol-rarity').value = 'c';
+	}
 	if (!document.querySelector('#lockSetSymbolURL').checked) {
 		if (replicatePrint && printSet == '30a' && ['1993', '1997'].includes(cardToImport.frame)) {
 			await placeThirtiethEditionSymbol();
@@ -7013,10 +7169,51 @@ function facesInLanguage(print) {
 	}
 	return printingsInLanguage[key];
 }
-//another printing of the card in that language usually has it; else the English one is translated
+//another printing of the card in that language usually has it; else another card with the same English type line printed in
+//that language (WotC's own words: "Instant" is 순간마법 in Korean); else the Spanish dictionary or a translation
 async function printedTypeLineOf(print) {
 	var face = (await facesInLanguage(print)).find(face => face.printed_type_line);
-	return face ? face.printed_type_line : translateTypeLine(print.english_type_line, print.lang);
+	if (face) {
+		return face.printed_type_line;
+	}
+	var sameType = await typeLineInLanguage(print.english_type_line, print.lang);
+	if (sameType) {
+		return sameType;
+	}
+	if (print.lang == 'es') {
+		return translateTypeLine(print.english_type_line, print.lang);
+	}
+	return (await machineTranslate(print.english_type_line, print.lang)) || print.english_type_line;
+}
+var typeLinesInLanguage = {};
+function typeLineInLanguage(englishTypeLine, lang) {
+	var key = lang + '|' + englishTypeLine;
+	if (!(key in typeLinesInLanguage)) {
+		typeLinesInLanguage[key] = (async () => {
+			if (!englishTypeLine || !lang) {
+				return null;
+			}
+			var words = englishTypeLine.replace(/[—–-]/g, ' ').split(' ').filter(word => word);
+			try {
+				var response = await fetch('https://api.scryfall.com/cards/search?unique=prints&q=' + encodeURIComponent(`lang:${lang} ` + words.map(word => `t:"${word}"`).join(' ')));
+				var cards = response.ok ? (await response.json()).data : [];
+				var match = cards.map(card => card.card_faces ? card.card_faces[0] : card).find(face => face.type_line == englishTypeLine && face.printed_type_line);
+				return match ? match.printed_type_line : null;
+			} catch (error) {
+				return null;
+			}
+		})();
+	}
+	return typeLinesInLanguage[key];
+}
+//the name in the print's language when the print has none: another printing's, else a translation ({name, source})
+async function printedNameOf(print) {
+	var face = (await facesInLanguage(print)).find(face => face.printed_name);
+	if (face) {
+		return {name: face.printed_name, source: 'printing'};
+	}
+	var translated = await machineTranslate(print.english_name, print.lang);
+	return translated ? {name: translated, source: 'translation'} : null;
 }
 //The rules text in the print's language when the print has none: another printing's official translation (with that printing's
 //wording), else Google's translation of the English text ({"text", "source"}; null when neither works)
@@ -7086,7 +7283,11 @@ function usePrintedLanguageText(face, lang) {
 	if (!lang || lang == 'en') {
 		return;
 	}
-	face.name = face.printed_name || face.name;
+	if (face.printed_name) {
+		face.name = face.printed_name;
+	} else {
+		face.missing_printed_name = true;
+	}
 	if (face.printed_type_line) {
 		face.type_line = face.printed_type_line;
 	} else {
