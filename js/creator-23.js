@@ -930,6 +930,7 @@ function autoFrame() {
 		var listPrint = autoFramePrint;
 		framing.then(async () => {
 			if (printStamp) { await addPrintHoloStamp(...stampArgs); }
+			await addStampScans();
 			await addPrintBorderColor(listPrint, frame);
 			await addTheListStamp(listPrint);
 		});
@@ -1234,6 +1235,7 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 	if (addM15Stamp) {
 		await addPrintHoloStamp(plan.stamp, colors, manaCost, typeLine, power);
 	}
+	await addStampScans();
 	await addTheListStamp(print);
 	drawFrames();
 	return true;
@@ -1273,6 +1275,58 @@ async function addPrintHoloStamp(stamp, colors, manaCost, typeLine, power) {
 		await addFrame([], stampFrame);
 	}
 	drawFrames();
+}
+//Scanned holo stamps: a scan of a printed stamp's foil saved as local_art/stamps/oval (the regular stamp) or triangle (Universes
+//Beyond), as .png, .webp or .jpg, is drawn over the digital foil, clipped to its shape, so printed proxies don't show a flat digital stamp.
+//The plate around it keeps the frame's color. Shapes are fractions of the digital stamp images (measured on them)
+var stampScanShapes = {
+	oval: {test: src => src.includes('/holoStamps/m15HoloStamp'), ellipse: {cx: 0.5, cy: 0.646, rx: 0.339, ry: 0.33}},
+	triangle: {test: src => src.includes('/ub/regular/stamp/'), points: [[0.246, 0.3], [0.754, 0.3], [0.5, 0.945]]}
+};
+var stampScansFound = {};
+//the scan's address (png, webp or jpg), or null
+function stampScanSource(kind) {
+	if (!(kind in stampScansFound)) {
+		stampScansFound[kind] = (async () => {
+			for (var extension of ['png', 'webp', 'jpg', 'jpeg']) {
+				var source = '/local_art/stamps/' + kind + '.' + extension;
+				var found = await fetch(fixUri(source), {method: 'HEAD'}).then(response => response.ok).catch(() => false);
+				if (found) {
+					return source;
+				}
+			}
+			return null;
+		})();
+	}
+	return stampScansFound[kind];
+}
+async function addStampScans() {
+	var added = [];
+	for (var stamp of card.frames.slice()) {
+		var kind = Object.keys(stampScanShapes).find(key => stampScanShapes[key].test(stamp.src || ''));
+		var scanSource = kind && stamp.bounds && /holo stamp/i.test(stamp.name) && !added.includes(kind) ? await stampScanSource(kind) : null;
+		if (!scanSource) {
+			continue;
+		}
+		added.push(kind); //a stamp split in two colors is two frames with one foil
+		var shape = stampScanShapes[kind];
+		var b = stamp.bounds;
+		var toCard = (x, y) => [b.x + x * b.width, b.y + y * b.height];
+		var corners = shape.ellipse ? [toCard(shape.ellipse.cx - shape.ellipse.rx, shape.ellipse.cy - shape.ellipse.ry), toCard(shape.ellipse.cx + shape.ellipse.rx, shape.ellipse.cy + shape.ellipse.ry)]
+			: [toCard(Math.min(...shape.points.map(p => p[0])), Math.min(...shape.points.map(p => p[1]))), toCard(Math.max(...shape.points.map(p => p[0])), Math.max(...shape.points.map(p => p[1])))];
+		//the mask covers the whole card (that's how frame masks are drawn), in thousandths of its width and height
+		var maskShape = shape.ellipse
+			? `<ellipse cx='${(corners[0][0] + corners[1][0]) * 500}' cy='${(corners[0][1] + corners[1][1]) * 500}' rx='${(corners[1][0] - corners[0][0]) * 500}' ry='${(corners[1][1] - corners[0][1]) * 500}' fill='white'/>`
+			: `<polygon points='${shape.points.map(p => toCard(p[0], p[1]).map(value => value * 1000).join(',')).join(' ')}' fill='white'/>`;
+		var mask = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='1000' height='1000' viewBox='0 0 1000 1000' preserveAspectRatio='none'>${maskShape}</svg>`);
+		var scanFrame = {name: 'Holo Stamp Scan', src: scanSource, noThumb: true, masks: [{src: mask, name: 'Foil'}],
+			bounds: {x: corners[0][0], y: corners[0][1], width: corners[1][0] - corners[0][0], height: corners[1][1] - corners[0][1]}};
+		card.frames.unshift(scanFrame);
+		await addFrame([], scanFrame);
+	}
+	if (added.length) {
+		drawFrames();
+	}
 }
 //"The List" reprints have the List icon at the bottom left
 function theListStampFrame(print) {
