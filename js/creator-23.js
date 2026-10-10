@@ -782,10 +782,16 @@ function autoFrame() {
 	var manaText = card.text.mana ? card.text.mana.text : '';
 	var typeText = card.text.type ? card.text.type.text : '';
 	var ptText = card.text.pt ? card.text.pt.text : '';
+	//replicated prints: the frame is picked from the English Oracle type line and text ("Legendary", "Land", "Add {R}"), not the
+	//printed ones (other languages, or old wordings like "Enchant Land" on an enchantment)
+	var otherLanguagePrint = printPlan && autoFramePrint && autoFramePrint.english_type_line ? autoFramePrint : null;
+	if (otherLanguagePrint) {
+		typeText = otherLanguagePrint.english_type_line;
+	}
 
 	var colors = [];
 	if (typeText.toLowerCase().includes('land')) {
-		var rules = card.text.rules ? card.text.rules.text : (card.text.ability0 ? card.text.ability0.text : '');
+		var rules = otherLanguagePrint ? (otherLanguagePrint.english_oracle_text || '') : card.text.rules ? card.text.rules.text : (card.text.ability0 ? card.text.ability0.text : '');
 		var flavorIndex = rules.indexOf('{flavor}');
 		if (flavorIndex == -1) {
 			flavorIndex = rules.indexOf('{oldflavor}');
@@ -902,6 +908,9 @@ function autoFrame() {
 	} else if (frame == 'Seventh') {
 		group = 'Misc-2';
 		framing = autoSeventhEditionFrame(colors, manaText, typeText, ptText);
+	} else if (frame == 'Fourth') {
+		group = 'Misc-2';
+		framing = autoFourthFrame(colors, manaText, typeText, ptText);
 	} else if (frame == 'M15BoxTopper') {
 		group = 'Showcase-5';
 		framing = autoExtendedArtFrame(colors, manaText, typeText, ptText, false);
@@ -921,6 +930,7 @@ function autoFrame() {
 		var listPrint = autoFramePrint;
 		framing.then(async () => {
 			if (printStamp) { await addPrintHoloStamp(...stampArgs); }
+			await addPrintBorderColor(listPrint, frame);
 			await addTheListStamp(listPrint);
 		});
 	}
@@ -936,8 +946,8 @@ var autoFrameShowcasePacks = {
 	otj: 'Wanted', pip: 'Pipboy', mkm: 'Dossier', ltr: 'Scroll', who: 'TARDIS', one: 'OilSlick', dmu: 'DMUStainedGlass',
 	snc: 'SNCArtDeco', vow: 'Fang', mid: 'Equinox', afr: 'DNDModule', mh2: 'MH2', cmr: 'CommanderLegends', znr: 'ZendikarRising',
 	m21: 'M21', thb: 'M15NyxShowcase',
-	neo: print => (print.type_line || '').includes('Samurai') ? 'NeoSamurai' : 'NeoNinja',
-	khm: print => (print.type_line || '').includes('Legendary') ? 'Kaldheim-2' : 'KaldheimNonleg'
+	neo: print => (print.english_type_line || print.type_line || '').includes('Samurai') ? 'NeoSamurai' : 'NeoNinja',
+	khm: print => (print.english_type_line || print.type_line || '').includes('Legendary') ? 'Kaldheim-2' : 'KaldheimNonleg'
 };
 //Sets where every card uses a special frame, showcase or not
 var autoFrameSetPacks = {
@@ -951,9 +961,9 @@ function autoFrameStyleFromPrint(print) {
 	if (!print || !print.layout) {
 		return {style: 'M15Regular-1'}; //nothing imported (yet)
 	}
-	var typeLine = print.type_line || '';
+	var typeLine = print.english_type_line || print.type_line || '';
 	var effects = print.frame_effects || [];
-	var stamp = ['oval', 'acorn'].includes(print.security_stamp) ? print.security_stamp : null;
+	var stamp = ['oval', 'acorn', 'triangle'].includes(print.security_stamp) ? print.security_stamp : null;
 	var layout = print.layout;
 	var borderless = print.border_color == 'borderless';
 	var extended = effects.includes('extendedart');
@@ -1026,8 +1036,11 @@ function autoFrameStyleFromPrint(print) {
 		}
 	}
 
-	if (print.frame == '1993' || print.frame == '1997') {
-		return {style: 'Seventh', notice: print.frame == '1993' ? 'Auto frame: the original (1993) frame is not available automatically, the Seventh Edition frame was used.' : ''};
+	if (print.frame == '1993') {
+		return {style: 'Fourth'};
+	}
+	if (print.frame == '1997') {
+		return {style: 'Seventh'};
 	}
 	if (print.frame == '2003') {
 		return {style: '8th', notice: effects.includes('colorshifted') ? 'Auto frame: colorshifted frames are not available automatically, the regular 8th Edition frame was used.' : ''};
@@ -1089,13 +1102,15 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 	var properties = cardFrameProperties(colors, manaCost, typeLine, power);
 	var colorNames = {W: ['White'], U: ['Blue'], B: ['Black'], R: ['Red'], G: ['Green'], M: ['Multicolored', 'Multicolor', 'Gold'], A: ['Artifact', 'Colorless'], C: ['Colorless', 'Artifact'], L: ['Land', 'Colorless', 'Artifact'], V: ['Vehicle', 'Artifact']};
 	function namesFor(letter) {
-		if (letter.length > 1 && letter.endsWith('L')) { //colored lands
-			return [colorNames[letter[0]][0] + ' Land', 'Land', colorNames[letter[0]][0]];
+		//colored lands: their own land pieces, else their color (e.g. the red bars of Kazuul's Cliffs), else the plain land ones.
+		//The outer frame of a land stays the land frame ("L")
+		if (letter.length > 1 && letter.endsWith('L')) {
+			return [colorNames[letter[0]][0] + ' Land', colorNames[letter[0]][0], 'Land'];
 		}
 		return colorNames[letter] || [];
 	}
-	function findEntry(letter, kinds) {
-		var suffixes = plan.face ? [' (' + plan.face + ')', ''] : [''];
+	function findEntry(letter, kinds, face = plan.face) {
+		var suffixes = face ? [' (' + face + ')', ''] : [''];
 		for (var name of namesFor(letter)) {
 			for (var kind of kinds) {
 				for (var suffix of suffixes) {
@@ -1132,7 +1147,9 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 
 	//holo stamp (split in two colors like the pinlines)
 	if (plan.stamp) {
-		var stampEntry = plan.stamp == 'oval' ? (findEntry(properties.frame, ['Holo Stamp']) || packFrames.find(frame => frame.name == 'Holo Stamp')) : null;
+		//a colored land's stamp takes its color, like its pinlines ("UL" -> blue)
+		var stampLetter = properties.frame == 'L' && properties.pinline.length > 1 && properties.pinline.endsWith('L') ? properties.pinline[0] : properties.frame;
+		var stampEntry = plan.stamp == 'oval' ? (findEntry(stampLetter, ['Holo Stamp']) || findEntry(properties.frame, ['Holo Stamp']) || packFrames.find(frame => frame.name == 'Holo Stamp')) : null;
 		var stampRightEntry = plan.stamp == 'oval' && properties.pinlineRight ? findEntry(properties.pinlineRight, ['Holo Stamp']) : null;
 		if (stampRightEntry) {
 			frames.push(copyWithMasks(stampRightEntry, [rightHalf]));
@@ -1140,8 +1157,10 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 		}
 		if (stampEntry) {
 			frames.push(copyWithMasks(stampEntry, []));
-		} else if (plan.m15Bottom) {
-			frames.push('m15Stamp'); //added after the other frames, like the regular auto frame does
+		} else if (plan.m15Bottom || plan.stamp == 'triangle') {
+			//added after the other frames, like the regular auto frame does. The Universes Beyond triangle sits in the same
+			//place on showcase frames too (e.g. The Lord of the Rings' scroll showcase)
+			frames.push('m15Stamp');
 		}
 	}
 	//legend crown
@@ -1183,12 +1202,14 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 			var mask = mainEntry.masks.find(item => item.name == maskName);
 			if (!mask) { continue; }
 			var [letterKey, rightKey] = maskLetters[maskName];
+			//modal back faces have dark title and type bars, but the same light text box as the front (e.g. Razorgrass Field)
+			var partFace = plan.face == 'Back' && plan.pack.startsWith('Modal') && (maskName == 'Rules' || maskName == 'Text') ? 'Front' : plan.face;
 			//the right half goes on top of the left one
 			if (rightKey && properties[rightKey]) {
-				var rightEntry = findEntry(properties[rightKey], ['Frame']);
+				var rightEntry = findEntry(properties[rightKey], ['Frame'], partFace);
 				if (rightEntry) { frames.push(copyWithMasks(rightEntry, [mask, rightHalf])); }
 			}
-			var partEntry = findEntry(properties[letterKey], ['Frame']) || mainEntry;
+			var partEntry = findEntry(properties[letterKey], ['Frame'], partFace) || mainEntry;
 			frames.push(copyWithMasks(partEntry, [mask]));
 			partsAdded ++;
 		}
@@ -1228,6 +1249,10 @@ async function addPrintHoloStamp(stamp, colors, manaCost, typeLine, power) {
 		var stampFrame = function(letter, rightHalf) {
 			if (letter.length > 1 && letter.endsWith('L')) { letter = letter[0]; } //colored lands
 			if (letter == 'V') { letter = 'A'; }
+			if (stamp == 'triangle') {
+				//Universes Beyond prints have a triangular stamp, also on their extended art and showcase frames
+				return makeUBFrameByLetter(letter, 'Stamp', rightHalf);
+			}
 			return {name: stampNames[letter] + ' Holo Stamp', src: '/img/frames/m15/holoStamps/m15HoloStamp' + letter + '.png', masks: rightHalf ? [{src: '/img/frames/maskRightHalf.png', name: 'Right Half'}] : [], bounds: {x: 0.436, y: 0.9034, width: 0.128, height: 0.0458}};
 		};
 		if (properties.pinlineRight) {
@@ -1237,6 +1262,8 @@ async function addPrintHoloStamp(stamp, colors, manaCost, typeLine, power) {
 			var letter = properties.frame;
 			if (letter == 'L' && colors.length == 0 && !typeLine.includes('Land')) {
 				letter = 'C';
+			} else if (letter == 'L' && properties.pinline.length > 1 && properties.pinline.endsWith('L')) {
+				letter = properties.pinline; //a colored land's stamp takes its color, like its pinlines ("UL" -> blue)
 			}
 			stampFrames.push(stampFrame(letter, false));
 		}
@@ -1254,6 +1281,24 @@ function theListStampFrame(print) {
 	}
 	var oldFrame = ['1993', '1997', '2003'].includes(print.frame);
 	return {name: '"The List" Stamp', src: '/img/frames/m15/theList/' + (oldFrame ? 'old' : 'regular') + '.svg', masks: []};
+}
+//White, silver and gold bordered prints (core sets up to 9th Edition, Un-sets, World Championship decks): the auto frames are
+//black bordered, so the border is painted over with the border mask of the frame
+var autoFrameBorderMasks = {Seventh: '/img/frames/seventh/regular/border.svg', '8th': '/img/frames/8th/border.svg', 'M15Regular-1': '/img/frames/m15/regular/m15MaskBorder.png'};
+function printBorderFrame(print, style) {
+	var color = print && {white: 'White', silver: 'Silver', gold: 'Gold'}[print.border_color];
+	if (!color || !autoFrameBorderMasks[style]) {
+		return null;
+	}
+	return {name: color + ' Border', src: '/img/frames/' + color.toLowerCase() + '.png', masks: [{src: autoFrameBorderMasks[style], name: 'Border'}], noDefaultMask: true};
+}
+async function addPrintBorderColor(print, style) {
+	var borderFrame = printBorderFrame(print, style);
+	if (borderFrame) {
+		card.frames.unshift(borderFrame);
+		await addFrame([], borderFrame);
+		drawFrames();
+	}
 }
 async function addTheListStamp(print) {
 	var listFrame = theListStampFrame(print);
@@ -1869,6 +1914,24 @@ async function autoSeventhEditionFrame(colors, mana_cost, type_line, power) {
 	frames.push(makeSeventhEditionFrameByLetter(properties.pinline, 'Textbox Pinline', false));
 	frames.push(makeSeventhEditionFrameByLetter(properties.frame, 'Border', false));
 
+	card.frames = frames;
+	card.frames.reverse();
+	await card.frames.forEach(item => addFrame([], item));
+	card.frames.reverse();
+}
+//The original (1993) frame: one image per color, and a black or white border
+async function autoFourthFrame(colors, mana_cost, type_line, power) {
+	card.frames = [];
+	document.querySelector('#frame-list').innerHTML = null;
+	var properties = cardFrameProperties(colors, mana_cost, type_line, power, 'Seventh');
+	var frameNames = {W: 'White', U: 'Blue', B: 'Black', R: 'Red', G: 'Green', M: 'Multicolored', A: 'Artifact', C: 'Artifact', V: 'Artifact', L: 'Land'};
+	var letter = properties.frame.length > 1 && properties.frame.endsWith('L') ? 'L' : properties.frame;
+	var colorName = frameNames[letter] || 'Artifact';
+	var white = autoFramePrint && autoFramePrint.border_color == 'white';
+	var frames = [
+		{name: (white ? 'White' : 'Black') + ' Border', src: '/img/frames/old/fourth/border' + (white ? 'White' : 'Black') + '.png', masks: []},
+		{name: colorName + ' Frame', src: '/img/frames/old/fourth/' + {White: 'w', Blue: 'u', Black: 'b', Red: 'r', Green: 'g', Multicolored: 'm', Artifact: 'a', Land: 'l'}[colorName] + '.png', masks: []}
+	];
 	card.frames = frames;
 	card.frames.reverse();
 	await card.frames.forEach(item => addFrame([], item));
@@ -3793,6 +3856,47 @@ function typeWidthBesideSetSymbol(textX, textY, textWidth, textHeight) {
 	}
 	return Math.max(symbolLeft - textX - scaleWidth(0.01), textWidth / 2);
 }
+//The visible part of a frame image (its pixels that aren't transparent), as fractions of the image
+function visibleBoxOf(image) {
+	if (image.visibleBoxSrc != image.src) {
+		image.visibleBox = {left: 0, top: 0, right: 1, bottom: 1};
+		image.visibleBoxSrc = image.src;
+		try {
+			var canvas = document.createElement('canvas');
+			canvas.width = 300;
+			canvas.height = Math.max(1, Math.round(300 * image.naturalHeight / image.naturalWidth));
+			var context = canvas.getContext('2d');
+			context.drawImage(image, 0, 0, canvas.width, canvas.height);
+			var data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+			var box = {left: canvas.width, top: canvas.height, right: -1, bottom: -1};
+			for (var y = 0; y < canvas.height; y ++) {
+				for (var x = 0; x < canvas.width; x ++) {
+					if (data[(y * canvas.width + x) * 4 + 3] > 40) {
+						box.left = Math.min(box.left, x);
+						box.right = Math.max(box.right, x + 1);
+						box.top = Math.min(box.top, y);
+						box.bottom = Math.max(box.bottom, y + 1);
+					}
+				}
+			}
+			if (box.right > box.left) {
+				image.visibleBox = {left: box.left / canvas.width, top: box.top / canvas.height, right: box.right / canvas.width, bottom: box.bottom / canvas.height};
+			}
+		} catch (error) {}
+	}
+	return image.visibleBox;
+}
+//Frames drawn over the bottom of the rules text box (power/toughness box, holo stamp), as rectangles in pixels of the text box
+function rulesTextObstacles(textX, textY) {
+	return (card.frames || []).filter(frame => /power\/toughness|holo stamp/i.test(frame.name) && frame.image && frame.image.complete && frame.image.naturalWidth).map(frame => {
+		var visible = visibleBoxOf(frame.image);
+		var bounds = frame.bounds || {x: 0, y: 0, width: 1, height: 1};
+		return {
+			left: scaleX(bounds.x + visible.left * bounds.width) - textX, right: scaleX(bounds.x + visible.right * bounds.width) - textX,
+			top: scaleY(bounds.y + visible.top * bounds.height) - textY, bottom: scaleY(bounds.y + visible.bottom * bounds.height) - textY
+		};
+	});
+}
 function writeText(textObject, targetContext) {
 	//Most bits of info about text loaded, with defaults when needed
 	var textX = scaleX(textObject.x) || scaleX(0);
@@ -3810,6 +3914,8 @@ function writeText(textObject, targetContext) {
 	var textManaCost = textObject.manaCost || false;
 	var textAllCaps = textObject.allCaps || false;
 	var textManaSpacing = scaleWidth(textObject.manaSpacing) || 0;
+	//the rules text keeps clear of the power/toughness box and the holo stamp, like on printed cards
+	var textObstacles = card.text && textObject == card.text.rules && !textOneLine && !textObject.rotation && !textObject.arcRadius ? rulesTextObstacles(textX, textY) : [];
 	//Buffers the canvases accordingly
 	var canvasMargin = 300;
 	paragraphCanvas.width = textWidth + 2 * canvasMargin;
@@ -3864,11 +3970,16 @@ function writeText(textObject, targetContext) {
 		rawText = rawText.replace(/\*/g, '{fontbelerenbsc}*{fontsaloongirl}');
 	}
 	rawText = rawText.replace(/ - /g, ' — ');
-	var splitText = rawText.replace(/\n/g, '{line}').replace(/{-}/g, '\u2014').replace(/{divider}/g, '{/indent}{lns}{bar}{lns}{fixtextalign}');
+	if (textObject.quoteKerning) {
+		//our font leaves a gap between a period or comma and the closing quote that printed cards don't have
+		rawText = rawText.replace(/([.,!?])”/g, '$1{left' + Math.round(-textObject.quoteKerning * startingTextSize) + '}”');
+	}
+	var splitText =rawText.replace(/\n/g, '{line}').replace(/{-}/g, '\u2014').replace(/{divider}/g, '{/indent}{lns}{bar}{lns}{fixtextalign}');
 	if (rawText.trim().startsWith('{flavor}') || rawText.trim().startsWith('{oldflavor}')) {
 		splitText = splitText.replace(/{flavor}/g, '{i}').replace(/{oldflavor}/g, '{i}');
 	} else {
-		splitText = splitText.replace(/{flavor}/g, '{/indent}{lns}{bar}{lns}{fixtextalign}{i}').replace(/{oldflavor}/g, '{/indent}{lns}{lns}{up30}{i}');
+		//flavorGap 0: the flavor text starts on the next line, with no space before it (the original 1993 frame)
+		splitText = splitText.replace(/{flavor}/g, '{/indent}{lns}{bar}{lns}{fixtextalign}{i}').replace(/{oldflavor}/g, textObject.flavorGap === 0 ? '{/indent}{lns}{i}' : '{/indent}{lns}{lns}{up30}{i}');
 	}
 	splitText = splitText.replace(/{/g, splitString + '{').replace(/}/g, '}' + splitString).replace(/ /g, splitString + ' ' + splitString).split(splitString);
 
@@ -3902,6 +4013,32 @@ function writeText(textObject, targetContext) {
 	// 	splitText.reverse();
 	// }
 	splitText.push('');
+	//Width of what is glued to a token, up to the next space: a mana symbol and the quote or comma around it ("“{2},")
+	//go to the next line together, like on printed cards
+	var gluedBreakCodes = ['line', 'lns', 'linenospace', 'bar', 'flavor', 'oldflavor', 'indent', '/indent', 'divider'];
+	function gluedWidth(index) {
+		var width = 0;
+		for (var next = index + 1; next < splitText.length; next ++) {
+			var token = splitText[next];
+			if (token == ' ' || token == '') {
+				break;
+			}
+			if (token.startsWith('{') && token.endsWith('}')) {
+				var code = token.slice(1, -1).toLowerCase();
+				if (gluedBreakCodes.includes(code)) {
+					break;
+				}
+				code = code.replaceAll('/', '');
+				var symbol = getManaSymbol(code) || getManaSymbol(code.split('').reverse().join(''));
+				if (symbol) {
+					width += symbol.width * textSize * 0.78 * (textObject.manaSymbolScale || 1) + (textSize * 0.04 + textManaSpacing) * 2;
+				}
+			} else {
+				width += lineContext.measureText(token).width;
+			}
+		}
+		return width;
+	}
 	//Manages the redraw loop
 	var drawingText = true;
 	//Repeatedly tries to draw the text at smaller and smaller sizes until it fits
@@ -3941,6 +4078,7 @@ function writeText(textObject, targetContext) {
 		var savedRollColor = 'black';
 		var drawToPrePTCanvas = false;
 		var widestLineWidth = 0;
+		var lineRects = []; //each drawn line (in pixels of the text box, before the vertical centering), for textObstacles
 		//variables that track various... things?
 		var textSize = startingTextSize;
 		var newLineSpacing = (textObject.lineSpacing || 0) * textSize;
@@ -3970,7 +4108,9 @@ function writeText(textObject, targetContext) {
 		}
 		lineContext.lineWidth = textOutlineWidth;
 		//Begin looping through words/codes
+		var tokenIndex = -1;
 		innerloop: for (word of splitText) {
+			tokenIndex ++;
 			var wordToWrite = word;
 			if (wordToWrite.includes('{') && wordToWrite.includes('}') || textManaCost || savedFont) {
 				var possibleCode = wordToWrite.toLowerCase().replace('{', '').replace('}', '');
@@ -3978,7 +4118,7 @@ function writeText(textObject, targetContext) {
 				if (possibleCode == 'line') {
 					newLine = true;
 					startingCurrentX = 0;
-					newLineSpacing = textSize * 0.35;
+					newLineSpacing = textSize * ('paragraphSpacing' in textObject ? textObject.paragraphSpacing : 0.35);
 				} else if (possibleCode == 'lns' || possibleCode == 'linenospace') {
 					newLine = true;
 				} else if (possibleCode == 'bar') {
@@ -3996,6 +4136,8 @@ function writeText(textObject, targetContext) {
 						newLineSpacing = textSize * -0.23;
 						textSize -= scaleHeight(0.0086);
 					}
+					//room taken by the flavor bar's line, as a share of the text size (replicated prints are tighter)
+					newLineSpacing += (textObject.barSpacing || 0) * textSize;
 					lineContext.drawImage(getManaSymbol(barImageName).image, canvasMargin + (textWidth - barWidth) / 2, canvasMargin + barDistance * textSize, barWidth, barHeight);
 				} else if (possibleCode == 'i') {
 					if (textFont == 'gilllsans' || textFont == 'neosans') {
@@ -4137,7 +4279,7 @@ function writeText(textObject, targetContext) {
 						currentX = savedTextXPosition2;
 					}
 				} else if (possibleCode.includes('ptshift')) {
-					if (card.frames.findIndex(element => element.name.toLowerCase().includes('power/toughness')) >= 0 || card.version.includes('planeswalker') || ['commanderLegends', 'm21', 'mysticalArchive', 'customDualLands', 'feuerAmeiseKaldheim'].includes(card.version)) {
+					if (cardShowsPowerToughnessBox()) {
 						ptShift[0] = scaleWidth(parseFloat(possibleCode.replace('ptshift', '').split(',')[0]));
 						ptShift[1] = scaleHeight(parseFloat(possibleCode.split(',')[1]));
 					}
@@ -4187,8 +4329,20 @@ function writeText(textObject, targetContext) {
 					}
 
 					var manaSymbolSpacing = textSize * 0.04 + textManaSpacing;
-					var manaSymbolWidth = manaSymbol.width * textSize * 0.78;
-					var manaSymbolHeight = manaSymbol.height * textSize * 0.78;
+					var manaSymbolWidth = manaSymbol.width * textSize * 0.78 * (textObject.manaSymbolScale || 1);
+					var manaSymbolHeight = manaSymbol.height * textSize * 0.78 * (textObject.manaSymbolScale || 1);
+					if (!textObject.manaPlacement && !textObject.manaLayout && !textManaCost && !textOneLine && textArcRadius == 0 && currentX > startingCurrentX && currentX + manaSymbolWidth + manaSymbolSpacing * 2 + gluedWidth(tokenIndex) >= textWidth) {
+						//the symbol doesn't fit: the line so far is done and the symbol starts the next one
+						var wrapAdjust = textAlign == 'center' ? (textWidth - currentX) / 2 : (textAlign == 'right' ? textWidth - currentX : 0);
+						widestLineWidth = Math.max(widestLineWidth, currentX);
+						lineRects.push({top: currentY, left: wrapAdjust, right: wrapAdjust + currentX, size: textSize});
+						paragraphContext.drawImage(lineCanvas, wrapAdjust, currentY);
+						lineY = 0;
+						lineContext.clearRect(0, 0, lineCanvas.width, lineCanvas.height);
+						currentX = startingCurrentX;
+						currentY += textSize + newLineSpacing;
+						newLineSpacing = (textObject.lineSpacing || 0) * textSize;
+					}
 					var manaSymbolX = currentX + canvasMargin + manaSymbolSpacing;
 					var manaSymbolY = canvasMargin + textSize * 0.34 - manaSymbolHeight / 2;
 					if (textObject.manaPlacement) {
@@ -4258,7 +4412,8 @@ function writeText(textObject, targetContext) {
 			}
 
 			//if the word goes past the max line width, go to the next line
-			if (wordToWrite && lineContext.measureText(wordToWrite).width + currentX >= textWidth && textArcRadius == 0) {
+			var glued = wordToWrite && wordToWrite != ' ' && !textOneLine && currentX > startingCurrentX ? gluedWidth(tokenIndex) : 0;
+			if (wordToWrite && lineContext.measureText(wordToWrite).width + glued + currentX >= textWidth && textArcRadius == 0) {
 				if (textOneLine && startingTextSize > 1) {
 					//doesn't fit... try again at a smaller text size?
 					startingTextSize -= 1;
@@ -4277,6 +4432,7 @@ function writeText(textObject, targetContext) {
 				if (currentX > widestLineWidth) {
 					widestLineWidth = currentX;
 				}
+				lineRects.push({top: currentY, left: horizontalAdjust, right: horizontalAdjust + currentX, size: textSize});
 				paragraphContext.drawImage(lineCanvas, horizontalAdjust, currentY);
 				lineY = 0;
 				lineContext.clearRect(0, 0, lineCanvas.width, lineCanvas.height);
@@ -4336,10 +4492,36 @@ function writeText(textObject, targetContext) {
 				continue outerloop;
 			}
 			if (splitText.indexOf(word) == splitText.length - 1) {
+				//printed cards shrink text that doesn't fit in whole steps (half a point), not pixel by pixel. A shrink of a pixel
+				//or two only means our font is a hair wider than the printed one, so that text keeps its size
+				if (textObject.sizeStep && startingTextSize < scaleHeight(textObject.size) * 0.98) {
+					var sizeStep = textObject.sizeStep * card.height;
+					var steppedSize = Math.floor(startingTextSize / sizeStep + 0.000001) * sizeStep;
+					if (steppedSize > 1 && steppedSize < startingTextSize - 0.01) {
+						startingTextSize = steppedSize;
+						continue outerloop;
+					}
+				}
 				//should manage vertical centering here
 				var verticalAdjust = 0;
 				if (!textObject.noVerticalCenter) {
 					verticalAdjust = (textHeight - currentY + textSize * 0.15) / 2;
+				}
+				if (textObstacles.length) {
+					//a line touching the power/toughness box or the holo stamp: the text goes up in its box, or else gets smaller
+					var lineHits = adjust => lineRects.some(line => line.right - line.left > 1 && textObstacles.some(obstacle => line.right > obstacle.left && line.left < obstacle.right && line.top + adjust + line.size * 0.9 > obstacle.top && line.top + adjust + line.size * 0.15 < obstacle.bottom));
+					if (lineHits(verticalAdjust)) {
+						var raisedAdjust = verticalAdjust;
+						while (raisedAdjust > 0 && lineHits(raisedAdjust)) {
+							raisedAdjust -= 1;
+						}
+						if (!lineHits(raisedAdjust)) {
+							verticalAdjust = raisedAdjust;
+						} else if (startingTextSize > 1) {
+							startingTextSize -= 1;
+							continue outerloop;
+						}
+					}
 				}
 				var finalHorizontalAdjust = 0;
 				const horizontalAdjustUnit = (textWidth - widestLineWidth) / 2;
@@ -5088,6 +5270,10 @@ function resetCopyright() {
 function copyrightElement(id) {
 	return document.getElementById(id) || {value: '', dataset: {}};
 }
+//Whether the bottom right corner has a power/toughness (or loyalty) box, which the bottom right lines move away from
+function cardShowsPowerToughnessBox() {
+	return card.frames.findIndex(element => element.name.toLowerCase().includes('power/toughness')) >= 0 || card.version.includes('planeswalker') || ['commanderLegends', 'm21', 'mysticalArchive', 'customDualLands', 'feuerAmeiseKaldheim'].includes(card.version);
+}
 function customCopyrightObject(original, customText) {
 	// keeps the frame's position/style and leading control codes (colors, shifts); customText null = frame default text
 	var copy = Object.assign({}, original);
@@ -5097,9 +5283,21 @@ function customCopyrightObject(original, customText) {
 		copy.text = leadingCodes + customText;
 		var lineCount = customText.split('\n').length;
 		if (lineCount > 1) {
-			// grow the box downwards from the frame's line, like printed cards ("mtgstory.com" / "© ..." on top, Wizards below)
+			// grow the box downwards from the frame's line, like printed cards ("mtgstory.com" / "© ..." on top, Wizards below).
+			// Measured on a printed card (Secret Lair 7043): the lines sit one font size apart. A plain new line would add
+			// paragraph spacing, so the lines are joined with {lns} (no extra space)
 			copy.oneLine = false;
-			copy.height = original.height * lineCount * 1.03;
+			copy.text = leadingCodes + customText.replace(/\n/g, '{lns}');
+			copy.lineSpacing = 0;
+			copy.height = original.size * lineCount;
+			if (cardShowsPowerToughnessBox() && /\{ptshift[^}]*\}/.test(leadingCodes)) {
+				//with a power/toughness box, printed cards keep the Wizards line in its place under the box and put the lines
+				//above it beside the box: all of them start where the Wizards line starts (measured on The Cabbage Merchant TLE 134,
+				//Lotho LTR 213, Doctor Who and Assassin's Creed cards)
+				copy.text = copy.text.replace(/\{ptshift[^}]*\}/, '');
+				copy.align = 'left';
+				copy.justify = 'right';
+			}
 		}
 	}
 	// when the artist line ("Illus. ...") is drawn and its box overlaps this one, push this line below it
@@ -5432,25 +5630,45 @@ function printedTextSet(setCode) {
 		var timeout = setTimeout(() => controller.abort(), 15000);
 		printedTextSets.set(code, fetch(`https://mtgjson.com/api/v5/${encodeURIComponent(code)}.json`, {signal: controller.signal})
 			.then(response => response.ok ? response.json() : null)
-			.then(json => (json && json.data && json.data.cards || []).map(c => ({id: c.identifiers && c.identifiers.scryfallId, side: c.side, text: c.originalText, type: c.originalType})))
-			.catch(() => [])
+			.then(json => ({
+				cards: (json && json.data && json.data.cards || []).map(c => ({id: c.identifiers && c.identifiers.scryfallId, side: c.side, text: c.originalText, type: c.originalType})),
+				baseSetSize: json && json.data ? json.data.baseSetSize : null
+			}))
+			.catch(() => ({cards: [], baseSetSize: null}))
 			.finally(() => clearTimeout(timeout)));
 	}
 	return printedTextSets.get(code);
+}
+//The number printed after the slash ("286/289"), for sets where Scryfall has no printed size (e.g. Time Spiral Remastered)
+async function baseSetSizeOf(setCode) {
+	return (await printedTextSet(setCode)).baseSetSize || null;
 }
 async function printedTextOf(print) {
 	if (!print.id && !print.set) {
 		return null;
 	}
-	var cards = await printedTextSet(print.set);
+	var cards = (await printedTextSet(print.set)).cards;
 	var side = print.face_index == 1 ? 'b' : 'a';
 	var match = cards.find(c => c.id == print.id && (!c.side || c.side == side));
 	if (!match || !match.text) {
 		return null;
 	}
+	//MTGJSON sometimes repeats the front face's text on the back face (e.g. Razorgrass Field, MH3 238):
+	//only trust it when it isn't the other face's text and its card types match Scryfall's for this face
+	var front = side == 'b' ? cards.find(c => c.id == print.id && c.side == 'a') : null;
+	if (front && front.text == match.text) {
+		return null;
+	}
+	//types printed before 6th Edition: "Summon Dragon", "Enchant Land", "Interrupt", "Mono Artifact"...
+	var modernTypes = typeLine => typeLine.replace(/^Summon\b.*/, 'Creature').replace(/^Enchant\b.*/, 'Enchantment').replace(/^Interrupt$/, 'Instant').replace(/^(Mono|Poly|Continuous) Artifact$/, 'Artifact');
+	var cardTypes = typeLine => modernTypes((typeLine || '').split(/ [—–-] /)[0]).split(' ').filter(word => ['Land', 'Creature', 'Instant', 'Sorcery', 'Artifact', 'Enchantment', 'Planeswalker', 'Battle', 'Tribal', 'Kindred'].includes(word)).sort().join(' ');
+	if (match.type && print.type_line && cardTypes(match.type) != cardTypes(print.type_line)) {
+		return null;
+	}
 	//MTGJSON writes the dash as " – "; cards (and the ability word italics) use " — "
 	var dashes = text => text.replace(/ – /g, ' — ');
-	return {oracle_text: dashes(match.text), type_line: match.type ? dashes(match.type) : print.type_line};
+	//MTGJSON writes the old tap symbol as "ocT" in printed texts: it becomes {T}, drawn with the symbol of the print's era
+	return {oracle_text: dashes(match.text).replace(/\bocT\b/g, '{T}'), type_line: match.type ? dashes(match.type) : print.type_line};
 }
 //Scryfall oracle text -> Card Conjurer text (italic reminder text and ability words, curly quotes, symbols)
 function formatImportedRulesText(oracleText, keywords) {
@@ -5506,12 +5724,65 @@ async function setCollectorStyleForPrint(print) {
 var franchiseCopyrightLines = [
 	{setName: 'Marvel', line: '© MARVEL'}
 ];
+//Universes Beyond sets whose cards all print the same line (read on printed cards). "" means the set prints none
+var franchiseLinesBySet = {
+	fin: 'FF© SQUARE ENIX', fic: 'FF© SQUARE ENIX', fca: 'FF© SQUARE ENIX',
+	ltr: '© MEE', ltc: '© MEE', hob: '©MEE',
+	tla: '©2025 Viacom.', tle: '©2025 Viacom.',
+	who: '© BBC', acr: '© Ubisoft', pip: '©2024 BSW', '40k': ''
+};
+//Secret Lair collaborations are all "Secret Lair Drop" on Scryfall, so their line goes by print ("set/number")
+var franchiseLinesByPrint = {
+	'sld/7043': '© UTV'
+};
+//Lines you saved with "Remember for this print" (Collector tab), kept in this browser
+function learnedFranchiseLines() {
+	try {
+		return JSON.parse(localStorage.getItem('franchiseLines') || '{}');
+	} catch (error) {
+		return {};
+	}
+}
+function printKey(print) {
+	return print && print.set && print.collector_number ? `${print.set.toLowerCase()}/${print.collector_number}` : null;
+}
+function franchiseLineOf(print) {
+	var key = printKey(print);
+	var learned = learnedFranchiseLines();
+	if (key && key in learned) {
+		return learned[key];
+	}
+	if (key && franchiseLinesByPrint[key]) {
+		return franchiseLinesByPrint[key];
+	}
+	if ((print.set || '').toLowerCase() in franchiseLinesBySet) {
+		return franchiseLinesBySet[print.set.toLowerCase()];
+	}
+	var bySet = franchiseCopyrightLines.find(item => (print.set_name || '').includes(item.setName));
+	return bySet ? bySet.line : null;
+}
+//Saves the lines written above the Wizards line in the bottom right text, for the print imported last
+function rememberFranchiseLine() {
+	var key = printKey(autoFramePrint);
+	if (!key) {
+		notify('Import a card with "Auto (from imported print)" first, then write its lines above the Wizards line.', 6);
+		return;
+	}
+	var lines = copyrightElement('info-copyright').value.split('\n');
+	var extra = lines.slice(0, -1).join('\n').trim(); //everything above the last line (the Wizards line)
+	var learned = learnedFranchiseLines();
+	learned[key] = extra;
+	localStorage.setItem('franchiseLines', JSON.stringify(learned));
+	notify(extra ? `Saved for ${key.toUpperCase()}: "${extra.replace(/\n/g, ' / ')}". It is used every time this print is imported, in the batch too.` : `Saved for ${key.toUpperCase()}: no extra line.`, 6);
+}
 function applyPrintCopyrightLines(print) {
 	var lines = [];
 	if ((print.promo_types || []).includes('universesbeyond')) {
-		var franchise = franchiseCopyrightLines.find(item => (print.set_name || '').includes(item.setName));
+		var franchise = franchiseLineOf(print);
 		if (franchise) {
-			lines.push(franchise.line);
+			lines.push(franchise);
+		} else if (franchise == null) {
+			notify(`Auto frame: this Universes Beyond card usually prints its franchise owner above the Wizards line (e.g. "© UTV"), and Scryfall doesn't say which. Write it in Collector → bottom right text and press "Remember for this print".`, 10);
 		}
 	}
 	if (print.story_spotlight) {
@@ -5538,16 +5809,27 @@ function retroCopyrightLine(print) {
 	if (released >= '2015-01-01') {
 		return {text: '™ & © {elemidinfo-year} Wizards of the Coast {elemidinfo-number}'};
 	}
+	if (released < '1994-11-01') {
+		//before Fallen Empires there's no copyright line: the artist line carries the © ("Illus. © Daniel Gelon" on Alpha to
+		//Revised, "Illus. © 1994 Jeff A. Menges" on Legends, The Dark and Summer), lower and a little larger (Revised Wheel of Fortune)
+		return {text: '', alignLeft: true, artist: 'Illus. © ' + (released >= '1994-06-01' ? '{elemidinfo-year} ' : '') + '{elemidinfo-artist}', artistLine: {y: 0.9205, size: 0.031}};
+	}
 	if (released < '1998-06-01') {
-		return {text: '©{elemidinfo-year} Wizards of the Coast, Inc.', alignLeft: print.frame == '1997'};
+		//left aligned on both old frames; up to Weatherlight (4th Edition, Ice Age, Mirage, Visions...) with "All rights reserved."
+		var rightsReserved = released < '1997-10-01' ? ' All rights reserved.' : '';
+		//on the original frame the artist line starts further left and is a little smaller (Ice Age Mystic Remora, 4th Edition Erosion)
+		var originalFrameArtist = print.frame == '1993' ? {y: retroBottomLines.artist.y, size: 0.027, x: 0.089} : null;
+		//"© 1995" on the original frame (Ice Age), "©1997" on the 1997 frame (Tempest)
+		return {text: '©' + (print.frame == '1993' ? ' ' : '') + '{elemidinfo-year} Wizards of the Coast, Inc.' + rightsReserved, alignLeft: true, artistLine: originalFrameArtist};
 	}
 	var prefix = released >= '2001-04-01' ? '™ & © ' : '©';
 	return {text: prefix + '1993–{elemidinfo-year} Wizards of the Coast, Inc. {elemidinfo-number}'};
 }
 //Text sizes measured on printed cards of that era (Prophecy, Mercadian Masques, Invasion): the frame's defaults run 4-9% large,
-//so lines broke earlier than on the real card. Our font is also ~6% wider than the one printed then, so the rules box
-//uses more of the light text box (it spans 0.107-0.896) to break lines where the printed card does
-var retroTextSizes = {title: {size: 0.039}, type: {size: 0.0307}, rules: {size: 0.0328, x: 0.115, width: 0.77}};
+//so lines broke earlier than on the real card. Our font is also ~6% wider than the one printed then: the rules keep the
+//printed letter height, with slightly tighter letter spacing, and use more of the light text box (it spans 0.107-0.896),
+//so lines break where the printed card breaks them
+var retroTextSizes = {title: {size: 0.039}, type: {size: 0.0307}, rules: {size: 0.0337, kerning: -0.0008, x: 0.115, width: 0.77}};
 function placeRetroTextSizes(print) {
 	if (!['1993', '1997'].includes(print.frame)) {
 		return;
@@ -5557,6 +5839,77 @@ function placeRetroTextSizes(print) {
 			Object.assign(card.text[key], values);
 		}
 	});
+	//the original (1993) frame, measured on Ice Age Mystic Remora and 4th Edition Erosion and Shivan Dragon: smaller rules text in a
+	//narrower column, no extra space between paragraphs, and the title a little lower than the frame's default. The font printed
+	//then is ~8% wider than ours at the same size (the opposite of later cards), hence the letter spacing
+	if (print.frame == '1993') {
+		Object.assign(card.text.rules || {}, {size: 0.0317, x: 0.15, width: 0.70, kerning: 0.0008, paragraphSpacing: 0, flavorGap: 0});
+		Object.assign(card.text.title || {}, {y: 0.036});
+	}
+	//the first core sets set rules text without flavor text as large as the box allows (Revised Wheel of Fortune and Wrath of God
+	//0.044, 4th Edition Erosion and Sindbad 0.040; long ones shrink to fit) in a narrower column, and cards with flavor text small
+	//(Revised Sedge Troll 0.028, 4th Edition Shivan Dragon, Serra Angel and Grizzly Bears 0.032)
+	var set = (print.set || '').toLowerCase();
+	var revisedOrOlder = ['lea', 'leb', '2ed', 'ced', 'cei', '3ed', 'fbb', 'sum'].includes(set);
+	var flavor = !!print.flavor_text;
+	if ((revisedOrOlder || set == '4ed') && card.text.rules) {
+		//the large text keeps the tighter letter spacing it was measured with (Wheel of Fortune, Erosion)
+		var large = {kerning: -0.0008};
+		Object.assign(card.text.rules, revisedOrOlder ? (flavor ? {size: 0.028, x: 0.115, width: 0.77} : Object.assign(large, {size: 0.044, x: 0.17, width: 0.66})) : (flavor ? {size: 0.0317, x: 0.115, width: 0.77} : Object.assign(large, {size: 0.041, x: 0.14, width: 0.72})));
+	} else if (set == 'chr' && card.text.rules) {
+		//Chronicles is set like 4th Edition, as large as the box allows even with flavor text (Fishliver Oil 0.040)
+		Object.assign(card.text.rules, {size: 0.041, x: 0.14, width: 0.72, kerning: -0.0008});
+	}
+}
+//Rules text spacing measured on printed 2015 frame cards (Artillery Blast DMU 6, Razorgrass Ambush MH3 238, Kazuul's Fury ZNR 146):
+//lines sit ~3% closer than the frames' defaults, the flavor bar takes a little less room, text that doesn't fit shrinks
+//in half point steps (0.002 of the card's height), and closing quotes sit right after the period
+var printedRulesSpacing = {lineSpacing: -0.03, barSpacing: -0.13, sizeStep: 0.002, quoteKerning: -0.18};
+function placePrintedRulesSpacing(print) {
+	var rules = card.text.rules;
+	if (!rules) {
+		return;
+	}
+	//the frame isn't reloaded between two cards of the same style: its own values are kept aside to restore them
+	if (!('defaultSpacing' in rules)) {
+		rules.defaultSpacing = Object.fromEntries(Object.keys(printedRulesSpacing).map(key => [key, rules[key]]));
+	}
+	Object.assign(rules, print.frame == '2015' ? printedRulesSpacing : rules.defaultSpacing);
+}
+//White bordered 8th and 9th Edition prints have the artist and copyright lines on the border, in black instead of white
+//(older frames print them on the frame, in white). The frame's own colors are kept aside: the frame isn't reloaded between
+//two cards of the same style
+function placeBorderColorLines(print) {
+	Object.values(card.bottomInfo || {}).forEach(line => {
+		if (!('defaultLook' in line)) {
+			line.defaultLook = {color: line.color, shadowX: line.shadowX, shadowY: line.shadowY};
+		}
+		var onWhite = print.border_color == 'white' && print.frame == '2003' && line.defaultLook.color == 'white';
+		Object.assign(line, onWhite ? {color: 'black', shadowX: 0, shadowY: 0} : (line.printLook || line.defaultLook));
+	});
+}
+//8th Edition to Theros (2003 frame), measured on printed cards (Champions of Kamigawa, Ravnica, Magic 2014): the artist line
+//sits further left and higher than the frame's default, with the brush closer to the name, the copyright line stays where the
+//frame's default puts it (below the artist line's box), and its wording changed with
+//the years ("Inc." until Conflux, "LLC" from Magic 2010, only the year from Return to Ravnica on)
+function placeEighthBottomLines(print) {
+	var top = card.bottomInfo ? card.bottomInfo.top : null;
+	var wizards = card.bottomInfo ? card.bottomInfo.wizards : null;
+	if (!top || !wizards || print.frame != '2003') {
+		return;
+	}
+	//the frame isn't reloaded between two cards of the same style: its own values are kept aside
+	[top, wizards].forEach(line => {
+		if (!('defaultPlace' in line)) {
+			line.defaultPlace = {x: line.x, y: line.y, text: line.text};
+		}
+	});
+	var released = print.released_at || '';
+	var owner = released >= '2012-10-01' ? '{elemidinfo-year} Wizards of the Coast' : '1993–{elemidinfo-year} Wizards of the Coast' + (released >= '2009-07-01' ? ' LLC' : ', Inc.');
+	var wizardsCodes = wizards.defaultPlace.text.match(/^(\{[^}]*\})*/)[0];
+	//printPosition: the copyright line keeps its printed place instead of being pushed below the artist line's box
+	card.bottomInfo.top = Object.assign({}, top, {x: top.defaultPlace.x - 0.015, y: top.defaultPlace.y - 0.0055, printPosition: true, text: top.defaultPlace.text.replace('￮ ', '￮{right' + Math.round(card.width * 0.003) + '}')});
+	card.bottomInfo.wizards = Object.assign({}, wizards, {y: top.defaultPlace.y + top.height, text: wizardsCodes + '™ & © ' + owner + ' {elemidinfo-number}'});
 }
 function placeRetroBottomLines(print) {
 	if (!card.bottomInfo || !card.bottomInfo.top || !card.bottomInfo.wizards || !['1993', '1997'].includes(print.frame)) {
@@ -5570,11 +5923,22 @@ function placeRetroBottomLines(print) {
 	var wizards = card.bottomInfo.wizards;
 	var topDefault = 'defaultAlign' in top ? top.defaultAlign : top.align;
 	var wizardsDefault = 'defaultAlign' in wizards ? wizards.defaultAlign : wizards.align;
-	card.bottomInfo.top = Object.assign({}, top, {y: lines.artist.y, size: lines.artist.size, height: lines.artist.size, printPosition: true, defaultAlign: topDefault});
+	var topText = 'defaultText' in top ? top.defaultText : top.text;
+	var topX = 'defaultX' in top ? top.defaultX : top.x;
+	var artistLine = copyright.artistLine || lines.artist;
+	card.bottomInfo.top = Object.assign({}, top, {x: artistLine.x || topX, y: artistLine.y, size: artistLine.size, height: artistLine.size, printPosition: true, defaultAlign: topDefault, defaultText: topText, defaultX: topX, text: copyright.artist || topText});
 	card.bottomInfo.top.align = alignOf(card.bottomInfo.top);
-	card.bottomInfo.wizards = Object.assign({}, wizards, {y: lines.wizards.y, size: lines.wizards.size, height: lines.wizards.size, text: copyright.text, defaultAlign: wizardsDefault});
+	//the copyright line is black on the lighter frames (the artist line stays white): white, blue and red on the original frame
+	//(4th Edition, Ice Age, Chronicles), white and red on the 1997 frame (Mirage, Tempest, 5th Edition)
+	var englishType = print.english_type_line || print.type_line || '';
+	var colors = print.colors || [];
+	var frameColor = englishType.includes('Land') ? 'L' : colors.length > 1 ? 'M' : colors.length == 0 ? 'A' : colors[0];
+	var blackCopyright = (print.released_at || '') < '2003-07-01' && (print.frame == '1993' ? ['W', 'U', 'R'] : ['W', 'R']).includes(frameColor);
+	card.bottomInfo.wizards = Object.assign({}, wizards, {y: lines.wizards.y, size: lines.wizards.size, height: lines.wizards.size, text: copyright.text, defaultAlign: wizardsDefault, printLook: blackCopyright ? {color: 'black', shadowX: 0, shadowY: 0} : null});
 	card.bottomInfo.wizards.align = alignOf(card.bottomInfo.wizards);
 }
+//The first core sets have no expansion symbol (Scryfall shows one of its own for them)
+var setsPrintedWithoutSymbol = ['lea', 'leb', '2ed', 'ced', 'cei', '3ed', 'fbb', 'sum'];
 //30th Anniversary Edition retro frame cards show the "30th Edition" logo where the set symbol goes
 var thirtiethEditionBounds = {x: 0.789, y: 0.557, width: 0.132}; //measured on printed cards
 //Puts the wordmark where printed cards have it (wider than the usual set symbol area)
@@ -5599,8 +5963,10 @@ function centerRetroLandText(print) {
 		rules.defaultAlign = rules.align || 'left';
 	}
 	var oracleText = (print.oracle_text || '').trim();
-	var retroLand = ['1993', '1997'].includes(print.frame) && (print.type_line || '').includes('Land');
-	rules.align = retroLand && oracleText != '' && !oracleText.includes('\n') ? 'center' : rules.defaultAlign;
+	var retroLand = ['1993', '1997'].includes(print.frame) && (print.english_type_line || print.type_line || '').includes('Land');
+	//the first core sets (Alpha to 4th Edition) center rules text that has no flavor text (expansions keep it on the left)
+	var earlyCoreSet = ['lea', 'leb', '2ed', 'ced', 'cei', '3ed', 'sum', '4ed'].includes((print.set || '').toLowerCase()) && !print.flavor_text;
+	rules.align = oracleText != '' && (earlyCoreSet || (retroLand && !oracleText.includes('\n'))) ? 'center' : rules.defaultAlign;
 }
 //Fills the extra text boxes of special frame versions (second halves, flip sides, class levels, mutate...)
 function importSpecialTextBoxes(print, otherHalf, rulesText) {
@@ -5623,6 +5989,46 @@ function importSpecialTextBoxes(print, otherHalf, rulesText) {
 		text.reminder.text = backFace.power != undefined ? backFace.power + '/' + backFace.toughness : '';
 	}
 	//modal double faced cards: the other face, shown at the bottom
+	if (text.flipsideType && text.rules && text.flipsideType.y > text.rules.y) {
+		//the frames' rules box runs under that bottom bar; printed cards fit the text above it, with a little more room on
+		//top (measured on Kazuul's Fury, ZNR 146, and Razorgrass Ambush, MH3 238)
+		if (!('defaultY' in text.rules)) {
+			text.rules.defaultY = text.rules.y;
+		}
+		text.rules.y = text.rules.defaultY + 0.003;
+		text.rules.height = text.flipsideType.y - text.rules.y - 0.006;
+	}
+	if (text.flipsideType) {
+		//back faces have dark title and type bars (white text) and a light bottom bar (black text).
+		//Both faces share the frame, so the frame's own colors are kept aside to restore them on a front face
+		var back = print.face_index == 1;
+		var recolor = (textBox, backColor) => {
+			if (!textBox) {
+				return;
+			}
+			if (!('defaultColor' in textBox)) {
+				textBox.defaultColor = textBox.color;
+			}
+			textBox.color = back ? backColor : textBox.defaultColor;
+		};
+		recolor(text.title, 'white');
+		recolor(text.type, 'white');
+		recolor(text.flipsideType, 'black');
+		recolor(text.flipSideReminder, 'black');
+		//printed bottom bars (Kazuul's Fury, ZNR 146) have smaller letters than the frames' defaults, but larger mana symbols
+		var resize = (textBox, scale, manaSymbolScale) => {
+			if (!textBox) {
+				return;
+			}
+			if (!('defaultSize' in textBox)) {
+				textBox.defaultSize = textBox.size;
+			}
+			textBox.size = textBox.defaultSize * scale;
+			textBox.manaSymbolScale = manaSymbolScale;
+		};
+		resize(text.flipsideType, 0.95);
+		resize(text.flipSideReminder, 0.865, 1.28);
+	}
 	if (text.flipsideType && print.sibling_faces) {
 		var otherFace = print.sibling_faces[print.face_index == 1 ? 0 : 1] || {};
 		var otherType = (otherFace.type_line || '').split(' — ')[0].split(' ').pop();
@@ -5675,6 +6081,10 @@ async function changeCardIndex() {
 		cardToImport = Object.assign({}, cardToImport, cardToImport.sibling_faces[0], {face_index: 0});
 		otherHalf = cardToImport.sibling_faces[1];
 	}
+	if (cardToImport.missing_printed_type_line) {
+		cardToImport.type_line = await printedTypeLineOf(cardToImport);
+		delete cardToImport.missing_printed_type_line;
+	}
 	autoFramePrint = cardToImport;
 	autoFramePrintNotice = '';
 	if (replicatePrint) {
@@ -5693,12 +6103,22 @@ async function changeCardIndex() {
 			if (printedText) {
 				cardToImport = Object.assign({}, cardToImport, printedText);
 			}
+			//Auras printed before 6th Edition have "Enchant Land" as their type, the first line of today's Oracle text
+			var enchantLine = (cardToImport.english_oracle_text || '').match(/^Enchant ([^\n]+)/);
+			if (enchantLine && (cardToImport.released_at || '') < '1999-04-21' && /^Enchantment — Aura$/.test(cardToImport.type_line || '')) {
+				cardToImport = Object.assign({}, cardToImport, {type_line: 'Enchant ' + enchantLine[1].replace(/\b\w/g, letter => letter.toUpperCase())});
+			}
 		}
-		if (printPlan.style == 'Seventh') {
+		if (printPlan.style == 'Seventh' || printPlan.style == 'Fourth') {
 			placeRetroBottomLines(cardToImport);
 			placeRetroTextSizes(cardToImport);
 		}
+		if (printPlan.style == '8th') {
+			placeEighthBottomLines(cardToImport);
+		}
+		placeBorderColorLines(cardToImport);
 	}
+	placePrintedRulesSpacing(replicatePrint ? cardToImport : {});
 	//text
 	var langFontCode = "";
 	if (cardToImport.lang == "ph") {langFontCode = "{fontphyrexian}"}
@@ -5724,7 +6144,7 @@ async function changeCardIndex() {
 
 	if (card.text.nickname) {card.text.nickname.text = cardToImport.flavor_name || '';}
 	if (card.text.mana) {card.text.mana.text = cardToImport.mana_cost || '';}
-	if (card.text.type) {card.text.type.text = langFontCode + cardToImport.type_line || '';}
+	if (card.text.type) {card.text.type.text = langFontCode + (cardToImport.type_line || '');}
 
 	var rulesText = formatImportedRulesText(cardToImport.oracle_text, cardToImport.keywords);
 
@@ -5778,6 +6198,12 @@ async function changeCardIndex() {
 				}
 				flavorTextCounter ++;
 			}
+			//the 1997 frame (Mirage to Scourge) prints a quote's attribution ("—Phage the Untouchable") on the right; other frames
+			//keep it on the left
+			//(ending ~0.018 of the card's width before the box, measured on Blood Celebrant and Advance Scout)
+			if (document.querySelector('#autoFrame').value == 'FromPrint' && cardToImport.frame == '1997' && (cardToImport.released_at || '') < '2003-07-01') {
+				flavorText = flavorText.replace(/\n(—|-)([^\n]*)$/, '\n{right}$1$2{right' + Math.round(card.width * 0.018) + '}');
+			}
 
 			if (card.version == 'pokemon') {
 				if (cardToImport.type_line.toLowerCase().includes('creature')) {
@@ -5793,7 +6219,12 @@ async function changeCardIndex() {
 				card.text.rules.text += curlyQuotes(flavorText.replace('\n', '{lns}'));
 			}
 
-			
+
+		}
+		//the tap symbol of the print's era: the "T" up to Revised, the arrow in a black diamond from 4th Edition to Scourge
+		var released = cardToImport.released_at || '';
+		if (document.querySelector('#autoFrame').value == 'FromPrint' && ['1993', '1997'].includes(cardToImport.frame) && released < '2003-07-01') {
+			card.text.rules.text = card.text.rules.text.replace(/\{T\}/g, released < '1995-04-01' ? '{originaltap}' : '{oldtap}');
 		}
 	} else if (card.text.case) {
 		rulesText = rulesText.replace(/(\r\n|\r|\n)/g, '//{bar}//');
@@ -5900,28 +6331,36 @@ async function changeCardIndex() {
 					document.querySelector('#info-number').value = number;
 
 					bottomInfoEdited();
-				} else if (setObject.printed_size) {
-					var number = document.querySelector('#info-number').value;
-					var printedSize = String(setObject.printed_size);
-					//old frames print "45/143"; later cards pad it, "045/264"
-					var unpadded = replicatePrint && ['1993', '1997'].includes(cardToImport.frame);
+				} else {
+					(async () => {
+						//Scryfall has no printed size for some sets (e.g. Time Spiral Remastered prints "286/289"): MTGJSON's base set size
+						//old frames: Scryfall's printed size counts some extras (8th Edition prints "50/350", Scryfall says 357), MTGJSON's doesn't
+						var oldFrame = replicatePrint && ['1993', '1997', '2003'].includes(cardToImport.frame);
+						var printedSizeValue = (oldFrame ? await baseSetSizeOf(printSet) : null) || setObject.printed_size || (replicatePrint ? await baseSetSizeOf(printSet) : null);
+						if (!printedSizeValue) {
+							return;
+						}
+						var number = document.querySelector('#info-number').value;
+						var printedSize = String(printedSizeValue);
+						//old frames print "45/143"; later cards pad it, "045/264"
+						var unpadded = oldFrame;
 
-					while (number.length < 3 && !unpadded) {
-						number = '0' + number;
-					}
+						while (number.length < 3 && !unpadded) {
+							number = '0' + number;
+						}
 
-					while (printedSize.length < 3 && !unpadded) {
-						printedSize = '0' + printedSize;
-					}
+						while (printedSize.length < 3 && !unpadded) {
+							printedSize = '0' + printedSize;
+						}
 
-					if (parseInt(number) <= parseInt(printedSize)) {
-						document.querySelector('#info-number').value = number + "/" + printedSize;
-					} else {
-						document.querySelector('#info-number').value = number;
-					}
+						if (parseInt(number) <= parseInt(printedSize)) {
+							document.querySelector('#info-number').value = number + "/" + printedSize;
+						} else {
+							document.querySelector('#info-number').value = number;
+						}
 
-					
-					bottomInfoEdited();
+						bottomInfoEdited();
+					})();
 				}
 			}
 		}
@@ -5948,6 +6387,8 @@ async function changeCardIndex() {
 	if (!document.querySelector('#lockSetSymbolURL').checked) {
 		if (replicatePrint && printSet == '30a' && ['1993', '1997'].includes(cardToImport.frame)) {
 			await placeThirtiethEditionSymbol();
+		} else if (replicatePrint && setsPrintedWithoutSymbol.includes(printSet.toLowerCase())) {
+			uploadSetSymbol(fixUri('/img/blank.png'), 'resetSetSymbol');
 		} else {
 			fetchSetSymbol();
 		}
@@ -6299,7 +6740,7 @@ function processScryfallCard(card, responseCards) {
 		var siblingFaces = card.card_faces.map(face => ({name: face.name, mana_cost: face.mana_cost, type_line: face.type_line, oracle_text: face.oracle_text, power: face.power, toughness: face.toughness, loyalty: face.loyalty, defense: face.defense, flavor_text: face.flavor_text}));
 		card.card_faces.forEach((face, faceIndex) => {
 			//print details live on the card, not on its faces: the auto frame needs them to replicate the print
-			['id', 'layout', 'frame', 'frame_effects', 'border_color', 'security_stamp', 'released_at', 'full_art', 'finishes', 'promo_types', 'keywords', 'illustration_id', 'artist', 'colors', 'story_spotlight', 'set_name'].forEach(key => {
+			['id', 'oracle_id', 'layout', 'frame', 'frame_effects', 'border_color', 'security_stamp', 'released_at', 'full_art', 'finishes', 'promo_types', 'keywords', 'illustration_id', 'artist', 'colors', 'story_spotlight', 'set_name'].forEach(key => {
 				if (!(key in face) && key in card) {
 					face[key] = card[key];
 				}
@@ -6310,25 +6751,97 @@ function processScryfallCard(card, responseCards) {
 			face.rarity = card.rarity;
 			face.collector_number = card.collector_number;
 			face.lang = card.lang;
-			face.english_name = face.name; //the art is always searched in English
-			if (card.lang != 'en') {
-				face.oracle_text = face.printed_text;
-				face.name = face.printed_name;
-				face.type_line = face.printed_type_line;
-			}
+			usePrintedLanguageText(face, card.lang);
 			responseCards.push(face);
 			if (!face.image_uris) {
 				face.image_uris = card.image_uris;
 			}
 		});
 	} else {
-		card.english_name = card.name; //the art is always searched in English
-		if (card.lang != 'en') {
-			card.oracle_text = card.printed_text;
-			card.name = card.printed_name;
-			card.type_line = card.printed_type_line;
-		}
+		usePrintedLanguageText(card, card.lang);
 		responseCards.push(card);
+	}
+}
+//Non English prints show their printed name, type line and text. The English ones are kept: the art is searched in English
+//and the auto frame reads the English type line and text. Scryfall lacks some printed fields (the type line of every card of
+//the latest Spanish sets, the text of basic lands): the type line is looked up later (printedTypeLineOf), the rest falls back
+//Spanish type lines, for cards never printed in Spanish with a type line on Scryfall. Words taken from Scryfall's Spanish prints
+//(the English type line next to the printed one): "Legendary Artifact Creature — Human Wizard" is "Criatura artefacto legendaria —
+//Hechicero humano": the last card type leads, the supertypes agree with it, and creature types go in reverse order
+var spanishCardTypes = {Artifact: ['Artefacto', 'm'], Battle: ['Batalla', 'f'], Creature: ['Criatura', 'f'], Enchantment: ['Encantamiento', 'm'], Instant: ['Instantáneo', 'm'], Kindred: ['Tribal', 'm'], Land: ['Tierra', 'f'], Planeswalker: ['Planeswalker', 'm'], Sorcery: ['Conjuro', 'm'], Tribal: ['Tribal', 'm']};
+var spanishSupertypes = [['Basic', 'básico', 'básica'], ['Snow', 'nevado', 'nevada'], ['Legendary', 'legendario', 'legendaria']];
+var spanishSubtypes = {Adventure: 'aventura', Advisor: 'consejero', Aetherborn: 'etergénito', Angel: 'ángel', Antelope: 'antílope', Ape: 'simio', Arcane: 'arcano', Archer: 'arquero', Archon: 'arconte', Artificer: 'artífice', Assassin: 'asesino', 'Assembly-Worker': 'operario', Background: 'trasfondo', Badger: 'tejón', Barbarian: 'bárbaro', Bard: 'bardo', Basilisk: 'basilisco', Bat: 'murciélago', Bear: 'oso', Beast: 'bestia', Beaver: 'castor', Beholder: 'contemplador', Bird: 'ave', Boar: 'jabalí', Brushwagg: 'yerbamala', Calix: 'cálix', Camel: 'camello', Capybara: 'capibara', Case: 'caso', Cat: 'felino', Cave: 'cueva', Centaur: 'centauro', Chimera: 'quimera', Citizen: 'ciudadano', Class: 'clase', Cleric: 'clérigo', Clown: 'payaso', Clue: 'pista', Construct: 'constructo', Coward: 'cobarde', Crab: 'cangrejo', Crocodile: 'cocodrilo', Curse: 'maldición', Cyclops: 'cíclope', Dauthi: 'dauti', Demigod: 'semidiós', Demon: 'demonio', Desert: 'desierto', Devil: 'diablo', Dinosaur: 'dinosaurio', Dog: 'perro', Dragon: 'dragón', Drake: 'draco', Dreadnought: 'acorazado', Drone: 'zángano', Druid: 'druida', Dryad: 'dríada', Dwarf: 'enano', Efreet: 'efrit', Egg: 'huevo', Elder: 'anciano', Elephant: 'elefante', Elf: 'elfo', Elk: 'alce', Equipment: 'equipo', Eye: 'ojo', Faerie: 'hada', Fish: 'pez', Food: 'comida', Forest: 'bosque', Fox: 'zorro', Frog: 'rana', Fungus: 'hongo', Gargoyle: 'gárgola', Gate: 'portal', Giant: 'gigante', Glimmer: 'brillo', Gnome: 'gnomo', Goat: 'cabra', Goblin: 'trasgo', God: 'deidad', Golem: 'gólem', Gorgon: 'gorgona', Griffin: 'grifo', Halfling: 'mediano', Hamster: 'hámster', Harpy: 'arpía', Hellion: 'infernal', Hippo: 'hipopótamo', Hippogriff: 'hipogrifo', Homarid: 'homárido', Homunculus: 'homúnculo', Horse: 'caballo', Human: 'humano', Hydra: 'hidra', Hyena: 'hiena', Illusion: 'ilusión', Imp: 'diablillo', Incarnation: 'encarnación', Insect: 'insecto', Island: 'isla', Jackal: 'chacal', Jellyfish: 'medusa', Juggernaut: 'destructor', Knight: 'caballero', Kobold: 'kóbold', Leech: 'sanguijuela', Lesson: 'lección', Leviathan: 'leviatán', Lizard: 'lagarto', Manticore: 'mantícora', Mercenary: 'mercenario', Merfolk: 'tritón', Minion: 'sicario', Minotaur: 'minotauro', Mite: 'ácaro', Mole: 'topo', Monk: 'monje', Monkey: 'primate', Moonfolk: 'pueblo-lunar', Mount: 'montura', Mountain: 'montaña', Mouse: 'ratón', Mutant: 'mutante', Nautilus: 'nautilo', Nightmare: 'pesadilla', Nymph: 'ninfa', Octopus: 'pulpo', Ogre: 'ogro', Ooze: 'cieno', Orc: 'orco', Otter: 'nutria', Ouphe: 'oufé', Ox: 'buey', Pangolin: 'pangolín', Peasant: 'plebeyo', Pegasus: 'pegaso', Pest: 'plaga', Phoenix: 'fénix', Phyrexian: 'pirexiano', Pilot: 'piloto', Pirate: 'pirata', Plains: 'llanura', Plant: 'planta', Porcupine: 'puercoespín', Possum: 'zarigüeya', Praetor: 'magistrado', Rabbit: 'conejo', Raccoon: 'mapache', Ranger: 'guardabosque', Rat: 'rata', Rebel: 'rebelde', Rhino: 'rinoceronte', Rogue: 'bribón', Room: 'sala', Salamander: 'salamandra', Samurai: 'samurái', Satyr: 'sátiro', Scarecrow: 'espantapájaros', Scorpion: 'escorpión', Scout: 'explorador', Serpent: 'serpiente', Shade: 'sombra', Shaman: 'chamán', Shapeshifter: 'metamorfo', Shark: 'tiburón', Sheep: 'oveja', Shrine: 'altar', Siege: 'asedio', Siren: 'sirena', Skeleton: 'esqueleto', Skunk: 'mofeta', Slith: 'slit', Slug: 'babosa', Snail: 'caracol', Snake: 'víbora', Soldier: 'soldado', Specter: 'espectro', Spellshaper: 'cambiahechizos', Sphere: 'esfera', Sphinx: 'esfinge', Spider: 'araña', Spirit: 'espíritu', Squid: 'calamar', Squirrel: 'ardilla', Starfish: 'estrella-de-mar', Survivor: 'superviviente', Swamp: 'pantano', Thopter: 'tóptero', Toy: 'juguete', Treasure: 'tesoro', Treefolk: 'pueblo-arbóreo', Trilobite: 'trilobites', Troll: 'trol', Turtle: 'tortuga', Unicorn: 'unicornio', Vampire: 'vampiro', Varmint: 'alimaña', Vehicle: 'vehículo', Wall: 'muro', Walrus: 'morsa', Warlock: 'brujo', Warrior: 'guerrero', Weasel: 'comadreja', Weird: 'extraño', Werewolf: 'licántropo', Whale: 'ballena', Wizard: 'hechicero', Wolf: 'lobo', Wolverine: 'glotón', Worm: 'gusano', Wraith: 'aparición', Wurm: 'sierpe'};
+function translateTypeLine(typeLine, lang) {
+	if (lang != 'es' || !typeLine) {
+		return typeLine; //only Spanish so far: other languages keep the English type line
+	}
+	var [mainTypes, subtypes] = typeLine.split(' — ');
+	var words = mainTypes.split(' ');
+	var cardTypes = words.filter(word => spanishCardTypes[word]);
+	if (!cardTypes.length) {
+		return typeLine;
+	}
+	var lead = spanishCardTypes[cardTypes[cardTypes.length - 1]];
+	var spanish = [lead[0]].concat(cardTypes.slice(0, -1).map(cardType => spanishCardTypes[cardType][0].toLowerCase()));
+	spanishSupertypes.filter(supertype => words.includes(supertype[0])).forEach(supertype => spanish.push(supertype[lead[1] == 'f' ? 2 : 1]));
+	if (!subtypes) {
+		return spanish.join(' ');
+	}
+	var subtypeWords = subtypes.split(' ');
+	if (cardTypes.includes('Creature') || cardTypes.includes('Kindred') || cardTypes.includes('Tribal')) {
+		subtypeWords.reverse();
+	}
+	if (cardTypes.includes('Planeswalker')) {
+		return spanish.join(' ') + ' — ' + subtypes; //planeswalker types are names
+	}
+	subtypeWords = subtypeWords.map((word, index) => {
+		var spanishWord = spanishSubtypes[word] || word;
+		return index == 0 ? spanishWord[0].toUpperCase() + spanishWord.slice(1) : spanishWord.toLowerCase();
+	});
+	return spanish.join(' ') + ' — ' + subtypeWords.join(' ');
+}
+var printedTypeLines = {}; //oracle id, language and face -> printed type line (a promise)
+async function printedTypeLineOf(print) {
+	var faceIndex = print.face_index || 0;
+	var key = `${print.oracle_id}/${print.lang}/${faceIndex}`;
+	if (!(key in printedTypeLines)) {
+		//another printing of the card in that language usually has it, the newest one first
+		printedTypeLines[key] = (async () => {
+			if (!print.oracle_id) {
+				return null;
+			}
+			try {
+				var response = await fetch('https://api.scryfall.com/cards/search?unique=prints&order=released&dir=desc&q=' + encodeURIComponent(`oracleid:${print.oracle_id} lang:${print.lang}`));
+				var printings = response.ok ? (await response.json()).data : [];
+				for (var printing of printings) {
+					var face = printing.card_faces ? printing.card_faces[faceIndex] : printing;
+					if (face && face.printed_type_line) {
+						return face.printed_type_line;
+					}
+				}
+			} catch (error) {}
+			return null;
+		})();
+	}
+	return (await printedTypeLines[key]) || translateTypeLine(print.english_type_line, print.lang);
+}
+function usePrintedLanguageText(face, lang) {
+	face.english_name = face.name;
+	face.english_type_line = face.type_line;
+	face.english_oracle_text = face.oracle_text;
+	if (!lang || lang == 'en') {
+		return;
+	}
+	face.name = face.printed_name || face.name;
+	if (face.printed_type_line) {
+		face.type_line = face.printed_type_line;
+	} else {
+		face.missing_printed_type_line = true;
+	}
+	if ('printed_text' in face) {
+		face.oracle_text = face.printed_text;
+	} else if ((face.english_type_line || '').includes('Basic')) {
+		face.oracle_text = ''; //printed basic lands have no text
 	}
 }
 
