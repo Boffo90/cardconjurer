@@ -6078,6 +6078,8 @@ function applyLearnedPrintedText(print, replicatePrint) {
 			notify(`Auto frame: Scryfall and MTGJSON don't have this card's text in ${language}: it was translated automatically (Google), so its wording may differ from the printed card. Correct it in the Text tab if needed and press "Remember for this print".`, 10);
 		} else if (print.printed_text_source != 'printing') {
 			notify(`Auto frame: Scryfall and MTGJSON don't have this card's text in ${language}, so the English text was used. Write it in the Text tab and press "Remember for this print".`, 10);
+		} else if (print.printed_flavor_source == 'translation') {
+			notify(`Auto frame: Scryfall and MTGJSON don't have this print's text in ${language}: the rules text is another printing's and the flavor text was translated automatically (Google), so its wording may differ from the printed card. Correct it in the Text tab if needed and press "Remember for this print".`, 10);
 		}
 	}
 }
@@ -6413,6 +6415,8 @@ async function changeCardIndex() {
 		} else {
 			cardToImport.printed_name_source = 'english';
 		}
+	} else if (replicatePrint) {
+		cardToImport.name = await printedNameCapitalization(cardToImport);
 	}
 	if (cardToImport.missing_printed_type_line) {
 		cardToImport.type_line = await printedTypeLineOf(cardToImport);
@@ -6422,10 +6426,19 @@ async function changeCardIndex() {
 	if (cardToImport.missing_printed_text && !cardToImport.printed_text_source && !learnedPrintedTexts()[printedTextKey(cardToImport)]) {
 		var languageText = await languageTextOf(cardToImport);
 		if (languageText) {
-			cardToImport.oracle_text = languageText.text;
+			cardToImport.oracle_text = oldWordingForPrint(languageText.text, cardToImport);
 			cardToImport.printed_text_source = languageText.source;
 			if (languageText.source == 'translation' && cardToImport.flavor_text) {
 				cardToImport.flavor_text = (await machineTranslate(cardToImport.flavor_text, cardToImport.lang, cardToImport.english_name, cardToImport.name)) || cardToImport.flavor_text;
+			}
+		}
+		//nor its flavor text: the English print's, translated (another printing's flavor text is another one)
+		if (!cardToImport.flavor_text) {
+			var englishFlavor = await englishFlavorTextOf(cardToImport);
+			var translatedFlavor = englishFlavor && await machineTranslate(englishFlavor, cardToImport.lang, cardToImport.english_name, cardToImport.name);
+			if (translatedFlavor) {
+				cardToImport.flavor_text = translatedFlavor;
+				cardToImport.printed_flavor_source = 'translation';
 			}
 		}
 	}
@@ -7224,6 +7237,50 @@ async function languageTextOf(print) {
 	}
 	var translated = await machineTranslate(print.english_oracle_text, print.lang, print.english_name, print.name);
 	return translated ? {text: translated, source: 'translation'} : null;
+}
+//Before Magic 2010 (July 2009) spells were "played", not "cast", and permanents came "into play", not "onto the battlefield": a
+//newer printing's Spanish text (or a translation of today's Oracle text) in the wording of an older print
+var oldSpanishVerbs = {lanzar: 'jugar', lanzas: 'juegas', lanza: 'juega', lanzan: 'juegan', 'lanzó': 'jugó', lance: 'juegue', lances: 'juegues', lancen: 'jueguen', lanzaste: 'jugaste', lanzaron: 'jugaron', lanzado: 'jugado', lanzada: 'jugada', lanzados: 'jugados', lanzadas: 'jugadas', lanzando: 'jugando', lanzarlo: 'jugarlo', lanzarla: 'jugarla', lanzarlos: 'jugarlos', lanzarlas: 'jugarlas', 'lánzalo': 'juégalo', 'lánzala': 'juégala', 'lanzará': 'jugará', 'lanzarás': 'jugarás', 'lanzaría': 'jugaría', lanzara: 'jugara', lanzaras: 'jugaras'};
+function oldWordingForPrint(text, print) {
+	if (!text || print.lang != 'es' || (print.released_at || '9999') >= '2009-07-17') {
+		return text;
+	}
+	var letter = 'A-Za-zÁÉÍÓÚÜÑáéíóúüñ';
+	return text.replace(new RegExp(`(?<![${letter}])(${Object.keys(oldSpanishVerbs).join('|')})(?![${letter}])`, 'gi'), word => {
+		var old = oldSpanishVerbs[word.toLowerCase()];
+		return word[0] == word[0].toUpperCase() ? old[0].toUpperCase() + old.slice(1) : old;
+	}).replace(/\b(en|al) campo de batalla\b/g, 'en juego').replace(/\ben el campo de batalla\b/g, 'en juego');
+}
+//The flavor text of the English print of the same card in the same set (non English prints without their own have none)
+async function englishFlavorTextOf(print) {
+	if (!print.set || !print.collector_number) {
+		return null;
+	}
+	try {
+		var response = await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(print.set)}/${encodeURIComponent(print.collector_number)}/en`);
+		var english = response.ok ? await response.json() : null;
+		var face = english && english.card_faces ? english.card_faces[print.face_index || 0] : english;
+		return face && face.flavor_text || null;
+	} catch (error) {
+		return null;
+	}
+}
+//Scryfall's Spanish names of Prophecy and Invasion have every word capitalized ("Estudio Rístico"), unlike the printed cards and
+//the other sets ("Estudio rístico"; Italian and Portuguese cards do capitalize every word): the capitalization of another printing
+//with the same name, else lowercase words after the first one (but the names also in the English name: "Agente de Shauku")
+var titleCasedNameSets = ['pcy', 'inv'];
+async function printedNameCapitalization(print) {
+	var name = print.name || '';
+	if (print.missing_printed_name || print.lang != 'es' || !titleCasedNameSets.includes((print.set || '').toLowerCase())) {
+		return name;
+	}
+	var sameName = (await facesInLanguage(print)).find(face => face.printed_name && face.printed_name != name && face.printed_name.toLowerCase() == name.toLowerCase());
+	if (sameName) {
+		return sameName.printed_name;
+	}
+	var plain = word => word.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+	var englishWords = (print.english_name || '').split(/[\s,'-]+/).map(plain);
+	return name.split(/(\s+)/).map((word, index) => index == 0 || englishWords.includes(plain(word.replace(/[,.]$/, ''))) ? word : word.toLowerCase()).join('');
 }
 var machineTranslations = {};
 //Google Translate (the free endpoint the translate widgets use), with mana symbols and the card's name protected, and the Magic
