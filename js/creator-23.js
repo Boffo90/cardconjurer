@@ -3940,6 +3940,22 @@ function typeWidthBesideSetSymbol(textX, textY, textWidth, textHeight) {
 	}
 	return Math.max(symbolLeft - textX - scaleWidth(0.01), textWidth / 2);
 }
+//Fonts without accented letters (the browser would draw "ó" in another, larger font): those letters are written as the plain
+//letter in the font plus its accent mark centered over it, raised on capitals ({accent´}, {capaccent´})
+var accentFreeFonts = ['goudymedieval'];
+var accentedLetters = (() => {
+	var letters = {};
+	var marks = {'́': '´', '̀': '`', '̂': 'ˆ', '̃': '˜', '̈': '¨'};
+	'áéíóúüñàèìòùâêîôûÁÉÍÓÚÜÑÀÈÌÒÙÂÊÎÔÛ'.split('').forEach(letter => {
+		var [base, combining] = letter.normalize('NFD').split('');
+		var capital = base != base.toLowerCase();
+		if (base == 'i') {
+			base = 'ı'; //dotless i under the mark
+		}
+		letters[letter] = base + '{' + (capital ? 'capaccent' : 'accent') + marks[combining] + '}';
+	});
+	return letters;
+})();
 //The visible part of a frame image (its pixels that aren't transparent), as fractions of the image
 function visibleBoxOf(image) {
 	if (image.visibleBoxSrc != image.src) {
@@ -4054,6 +4070,9 @@ function writeText(textObject, targetContext) {
 		rawText = rawText.replace(/\*/g, '{fontbelerenbsc}*{fontsaloongirl}');
 	}
 	rawText = rawText.replace(/ - /g, ' — ');
+	if (accentFreeFonts.includes((textObject.font || 'mplantin').toLowerCase())) {
+		rawText = rawText.replace(/[áéíóúüñÁÉÍÓÚÜÑàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛ]/g, letter => accentedLetters[letter] || letter);
+	}
 	if (textObject.quoteKerning) {
 		//our font leaves a gap between a period or comma and the closing quote that printed cards don't have
 		rawText = rawText.replace(/([.,!?])”/g, '$1{left' + Math.round(-textObject.quoteKerning * startingTextSize) + '}”');
@@ -4166,6 +4185,7 @@ function writeText(textObject, targetContext) {
 		var drawToPrePTCanvas = false;
 		var widestLineWidth = 0;
 		var lineRects = []; //each drawn line (in pixels of the text box, before the vertical centering), for textObstacles
+		var lastLetterWritten = '';
 		//variables that track various... things?
 		var textSize = startingTextSize;
 		var newLineSpacing = (textObject.lineSpacing || 0) * textSize;
@@ -4202,7 +4222,17 @@ function writeText(textObject, targetContext) {
 			if (wordToWrite.includes('{') && wordToWrite.includes('}') || textManaCost || savedFont) {
 				var possibleCode = wordToWrite.toLowerCase().replace('{', '').replace('}', '');
 				wordToWrite = null;
-				if (possibleCode == 'line') {
+				if (possibleCode.startsWith('accent') || possibleCode.startsWith('capaccent')) {
+					//an accent mark centered over the letter just written (fonts without accented letters, see accentFreeFonts)
+					var mark = possibleCode.replace('capaccent', '').replace('accent', '');
+					var letterWidth = lineContext.measureText(lastLetterWritten || 'o').width;
+					var markX = currentX + canvasMargin - letterWidth / 2 - lineContext.measureText(mark).width / 2;
+					var markY = canvasMargin + textSize * textFontHeightRatio + lineY - (possibleCode.startsWith('cap') ? textSize * 0.29 : 0);
+					if (textOutlineWidth >= 1) {
+						lineContext.strokeText(mark, markX, markY);
+					}
+					lineContext.fillText(mark, markX, markY);
+				} else if (possibleCode == 'line') {
 					newLine = true;
 					startingCurrentX = 0;
 					newLineSpacing = textSize * ('paragraphSpacing' in textObject ? textObject.paragraphSpacing : 0.35);
@@ -4572,6 +4602,7 @@ function writeText(textObject, targetContext) {
 				} else {
 					currentX += lineContext.measureText(wordToWrite).width;
 				}
+				lastLetterWritten = wordToWrite.slice(-1); //for {accent...}: the letter its mark goes over
 			}
 			if (currentY > textHeight && textBounded && !textOneLine && startingTextSize > 1 && textArcRadius == 0) {
 				//doesn't fit... try again at a smaller text size?
@@ -5876,6 +5907,50 @@ function rememberFranchiseLine() {
 	localStorage.setItem('franchiseLines', JSON.stringify(learned));
 	notify(extra ? `Saved for ${key.toUpperCase()}: "${extra.replace(/\n/g, ' / ')}". It is used every time this print is imported, in the batch too.` : `Saved for ${key.toUpperCase()}: no extra line.`, 6);
 }
+//Texts the user wrote for a print whose printed text no source has (old cards in other languages): title, type and rules,
+//by print and language ("mir/307/es"), used every time that print is imported
+function printedTextKey(print) {
+	var key = printKey(print);
+	return key ? `${key}/${print.lang || 'en'}${print.face_index ? '/' + print.face_index : ''}` : null;
+}
+function learnedPrintedTexts() {
+	try {
+		return JSON.parse(localStorage.getItem('printedTexts') || '{}');
+	} catch (error) {
+		return {};
+	}
+}
+function rememberPrintedText() {
+	var key = printedTextKey(autoFramePrint);
+	if (!key || !card.text.rules) {
+		notify('Import a card first, then write its text as printed.', 6);
+		return;
+	}
+	var learned = learnedPrintedTexts();
+	learned[key] = {title: card.text.title ? card.text.title.text : null, type: card.text.type ? card.text.type.text : null, rules: card.text.rules.text};
+	try {
+		localStorage.setItem('printedTexts', JSON.stringify(learned));
+		notify(`Saved the title, type and text of ${key.toUpperCase()}. They are used every time this print is imported, in the batch too.`, 6);
+	} catch (error) {
+		notify('The text could not be saved (the browser storage is full or blocked).', 6);
+	}
+}
+//the saved texts of this print, or a notice when its language's text is missing
+function applyLearnedPrintedText(print, replicatePrint) {
+	var learned = learnedPrintedTexts()[printedTextKey(print)];
+	if (learned) {
+		if (learned.title != null && card.text.title) { card.text.title.text = learned.title; }
+		if (learned.type != null && card.text.type) { card.text.type.text = learned.type; }
+		if (learned.rules != null && card.text.rules) { card.text.rules.text = learned.rules; }
+	} else if (replicatePrint && print.missing_printed_text) {
+		var language = (print.lang || '').toUpperCase();
+		if (print.printed_text_source == 'translation') {
+			notify(`Auto frame: Scryfall and MTGJSON don't have this card's text in ${language}: it was translated automatically (Google), so its wording may differ from the printed card. Correct it in the Text tab if needed and press "Remember for this print".`, 10);
+		} else if (print.printed_text_source != 'printing') {
+			notify(`Auto frame: Scryfall and MTGJSON don't have this card's text in ${language}, so the English text was used. Write it in the Text tab and press "Remember for this print".`, 10);
+		}
+	}
+}
 function applyPrintCopyrightLines(print) {
 	var lines = [];
 	if ((print.promo_types || []).includes('universesbeyond')) {
@@ -5928,9 +6003,11 @@ function retroCopyrightLine(print) {
 }
 //Text sizes measured on printed cards of that era (Prophecy, Mercadian Masques, Invasion): the frame's defaults run 4-9% large,
 //so lines broke earlier than on the real card. Our font is also ~6% wider than the one printed then: the rules keep the
-//printed letter height, with slightly tighter letter spacing, and use more of the light text box (it spans 0.107-0.896),
-//so lines break where the printed card breaks them
-var retroTextSizes = {title: {size: 0.039}, type: {size: 0.0307}, rules: {size: 0.0337, kerning: -0.0008, x: 0.115, width: 0.77}};
+//printed letter height, with slightly tighter letter spacing.
+//The column is where printed 1997 frame cards set it (0.128 to ~0.868 on ten cards from Mirage to Odyssey): with it, all of
+//Rhystic Study, Crystal Spray, Advance Scout, Argothian Elder, Afterlife, Staunch Defenders, Sphere of Law and Steadfast Guard
+//break into as many lines as printed
+var retroTextSizes = {title: {size: 0.039}, type: {size: 0.0307}, rules: {size: 0.0337, kerning: -0.0008, x: 0.128, width: 0.742}};
 function placeRetroTextSizes(print) {
 	if (!['1993', '1997'].includes(print.frame)) {
 		return;
@@ -6189,6 +6266,17 @@ async function changeCardIndex() {
 		cardToImport.type_line = await printedTypeLineOf(cardToImport);
 		delete cardToImport.missing_printed_type_line;
 	}
+	//no text in the print's language: another printing's, else a translation (a text the user saved for the print wins over both)
+	if (cardToImport.missing_printed_text && !cardToImport.printed_text_source && !learnedPrintedTexts()[printedTextKey(cardToImport)]) {
+		var languageText = await languageTextOf(cardToImport);
+		if (languageText) {
+			cardToImport.oracle_text = languageText.text;
+			cardToImport.printed_text_source = languageText.source;
+			if (languageText.source == 'translation' && cardToImport.flavor_text) {
+				cardToImport.flavor_text = (await machineTranslate(cardToImport.flavor_text, cardToImport.lang, cardToImport.english_name, cardToImport.name)) || cardToImport.flavor_text;
+			}
+		}
+	}
 	autoFramePrint = cardToImport;
 	autoFramePrintNotice = '';
 	if (replicatePrint) {
@@ -6330,6 +6418,7 @@ async function changeCardIndex() {
 		if (document.querySelector('#autoFrame').value == 'FromPrint' && ['1993', '1997'].includes(cardToImport.frame) && released < '2003-07-01') {
 			card.text.rules.text = card.text.rules.text.replace(/\{T\}/g, released < '1995-04-01' ? '{originaltap}' : '{oldtap}');
 		}
+		applyLearnedPrintedText(cardToImport, document.querySelector('#autoFrame').value == 'FromPrint');
 	} else if (card.text.case) {
 		rulesText = rulesText.replace(/(\r\n|\r|\n)/g, '//{bar}//');
 		card.text.case.text = langFontCode + rulesText;
@@ -6904,30 +6993,91 @@ function translateTypeLine(typeLine, lang) {
 	});
 	return spanish.join(' ') + ' — ' + subtypeWords.join(' ');
 }
-var printedTypeLines = {}; //oracle id, language and face -> printed type line (a promise)
-async function printedTypeLineOf(print) {
+var printingsInLanguage = {}; //oracle id, language and face -> that face of the card's printings in that language, newest first (a promise)
+function facesInLanguage(print) {
 	var faceIndex = print.face_index || 0;
 	var key = `${print.oracle_id}/${print.lang}/${faceIndex}`;
-	if (!(key in printedTypeLines)) {
-		//another printing of the card in that language usually has it, the newest one first
-		printedTypeLines[key] = (async () => {
+	if (!(key in printingsInLanguage)) {
+		printingsInLanguage[key] = (async () => {
 			if (!print.oracle_id) {
-				return null;
+				return [];
 			}
 			try {
 				var response = await fetch('https://api.scryfall.com/cards/search?unique=prints&order=released&dir=desc&q=' + encodeURIComponent(`oracleid:${print.oracle_id} lang:${print.lang}`));
 				var printings = response.ok ? (await response.json()).data : [];
-				for (var printing of printings) {
-					var face = printing.card_faces ? printing.card_faces[faceIndex] : printing;
-					if (face && face.printed_type_line) {
-						return face.printed_type_line;
-					}
-				}
-			} catch (error) {}
-			return null;
+				return printings.map(printing => printing.card_faces ? printing.card_faces[faceIndex] : printing).filter(face => face);
+			} catch (error) {
+				return [];
+			}
 		})();
 	}
-	return (await printedTypeLines[key]) || translateTypeLine(print.english_type_line, print.lang);
+	return printingsInLanguage[key];
+}
+//another printing of the card in that language usually has it; else the English one is translated
+async function printedTypeLineOf(print) {
+	var face = (await facesInLanguage(print)).find(face => face.printed_type_line);
+	return face ? face.printed_type_line : translateTypeLine(print.english_type_line, print.lang);
+}
+//The rules text in the print's language when the print has none: another printing's official translation (with that printing's
+//wording), else Google's translation of the English text ({"text", "source"}; null when neither works)
+async function languageTextOf(print) {
+	var face = (await facesInLanguage(print)).find(face => face.printed_text);
+	if (face) {
+		return {text: face.printed_text, source: 'printing'};
+	}
+	var translated = await machineTranslate(print.english_oracle_text, print.lang, print.english_name, print.name);
+	return translated ? {text: translated, source: 'translation'} : null;
+}
+var machineTranslations = {};
+//Google Translate (the free endpoint the translate widgets use), with mana symbols and the card's name protected, and the Magic
+//terms it gets wrong put back as printed
+async function machineTranslate(text, lang, englishName, printedName) {
+	if (!text || !lang || lang == 'en') {
+		return null;
+	}
+	var cacheKey = lang + '|' + text;
+	if (!(cacheKey in machineTranslations)) {
+		machineTranslations[cacheKey] = (async () => {
+			var symbols = [];
+			var protectedText = text.replace(/\{[^}]+\}/g, symbol => { symbols.push(symbol); return '[' + (symbols.length - 1) + ']'; });
+			if (englishName) {
+				protectedText = protectedText.split(englishName).join('[N]');
+			}
+			try {
+				var url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=' + encodeURIComponent(lang) + '&dt=t&q=' + encodeURIComponent(protectedText);
+				var response = await fetch(url).catch(() => null);
+				if (!response || !response.ok) {
+					await new Promise(wait => setTimeout(wait, 1500)); //one more try: it refuses requests that come too fast
+					response = await fetch(url);
+				}
+				if (!response.ok) {
+					return null;
+				}
+				var result = (await response.json())[0].map(part => part[0]).join('');
+				result = result.replace(/\[\s*N\s*\]/gi, printedName || englishName).replace(/\[\s*(\d+)\s*\]/g, (code, index) => symbols[index] || code);
+				return lang == 'es' ? fixSpanishMagicTerms(result) : result;
+			} catch (error) {
+				return null;
+			}
+		})();
+	}
+	var translation = await machineTranslations[cacheKey];
+	if (translation == null) {
+		delete machineTranslations[cacheKey]; //a failed request (e.g. too many at once) is tried again next time
+	}
+	return translation;
+}
+//Words a general translator gets wrong in Magic's Spanish
+function fixSpanishMagicTerms(text) {
+	return text.replace(/\bun instante\b/g, 'un instantáneo').replace(/\binstantes\b/g, 'instantáneos').replace(/\bInstante\b/g, 'Instantáneo')
+		.replace(/\bhechizo de brujería\b/gi, 'conjuro').replace(/\bbrujería\b/g, 'conjuro').replace(/\bBrujería\b/g, 'Conjuro')
+		.replace(/\bpiscina de maná/g, 'reserva de maná').replace(/\btokens\b/g, 'fichas').replace(/\btoken\b/g, 'ficha')
+		.replace(/\bcampo de juego\b/g, 'campo de batalla')
+		//"Add {G}" is "Agrega {G}", not "Suma"/"Sumar"/"Añade"/"Añadir"/"Agregar" (only when mana follows)
+		.replace(/\b(Suma|Sumar|Añade|Añadir|Agregar)(?=\s+(\{|un\b|una\b|dos\b|tres\b|cuatro\b|cinco\b|seis\b|siete\b|X\b|maná))/g, 'Agrega')
+		.replace(/\b(suma|sumar|añade|añadir|agregar)(?=\s+(\{|un\b|una\b|dos\b|tres\b|cuatro\b|cinco\b|seis\b|siete\b|X\b|maná))/g, 'agrega')
+		//"three mana" is "tres manás"
+		.replace(/\b(dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|X) maná(?!s)/g, '$1 manás');
 }
 function usePrintedLanguageText(face, lang) {
 	face.english_name = face.name;
@@ -6946,6 +7096,8 @@ function usePrintedLanguageText(face, lang) {
 		face.oracle_text = face.printed_text;
 	} else if ((face.english_type_line || '').includes('Basic')) {
 		face.oracle_text = ''; //printed basic lands have no text
+	} else if (face.oracle_text) {
+		face.missing_printed_text = true; //the English text stays, unless the user saved this print's (rememberPrintedText)
 	}
 }
 

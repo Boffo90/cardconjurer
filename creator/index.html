@@ -212,6 +212,8 @@
 								<button class='input' onclick="toggleTextTag('i');">Italic</button>
 								<button class='input' onclick="toggleTextTag('bold');">Bold</button>
 							</div>
+							<h5 class='margin-bottom padding input-description'>When Scryfall and MTGJSON don't have a print's text in its language (common on old cards), write the title, type and rules as printed, then save them: they're used every time this print is imported, in batches too.</h5>
+							<button class='input margin-bottom' onclick='rememberPrintedText();'>Remember for this print</button>
 							<h5 class='margin-bottom padding input-description'>Edit the placement and size of the selected textbox</h5>
 							<button class='input' onclick='textboxEditor();'>Edit Bounds</button>
 							<h5 class='margin-bottom padding input-description'>Adjust font size</h5>
