@@ -408,6 +408,7 @@ function drawFrames() {
 			}
 			var bounds = item.bounds || {};
 			var ogBounds = item.ogBounds || bounds;
+			var itemImage = stampWithScan(item) || item.image; //holo stamps with a scanned foil (local_art/stamps)
 			frameX = Math.round(scaleX(bounds.x || 0));
 			frameY = Math.round(scaleY(bounds.y || 0));
 			frameWidth = Math.round(scaleWidth(bounds.width || 1));
@@ -419,7 +420,7 @@ function drawFrames() {
 			if (item.preserveAlpha) { //preserves alpha, and blends colors using an alpha that only cares about the mask(s), and the user-set opacity value
 				//draw the image onto a separate canvas to view its unaltered state
 				frameCompositingContext.clearRect(0, 0, frameCanvas.width, frameCanvas.height);
-				frameCompositingContext.drawImage(item.image, frameX, frameY, frameWidth, frameHeight);
+				frameCompositingContext.drawImage(itemImage, frameX, frameY, frameWidth, frameHeight);
 				//create pixel arrays for the existing image, new image, and alpha mask
 				var existingData = frameContext.getImageData(0, 0, frameCanvas.width, frameCanvas.height)
 				var existingPixels = existingData.data;
@@ -438,7 +439,7 @@ function drawFrames() {
 				frameContext.putImageData(existingData, 0, 0);
 			} else {
 				//mask the image
-				frameMaskingContext.drawImage(item.image, frameX, frameY, frameWidth, frameHeight);
+				frameMaskingContext.drawImage(itemImage, frameX, frameY, frameWidth, frameHeight);
 				//color overlay
 				if (item.colorOverlayCheck) {frameMaskingContext.globalCompositeOperation = 'source-in'; frameMaskingContext.fillStyle = item.colorOverlay; frameMaskingContext.fillRect(0, 0, frameMaskingCanvas.width, frameMaskingCanvas.height);}
 				//HSL adjustments
@@ -930,7 +931,6 @@ function autoFrame() {
 		var listPrint = autoFramePrint;
 		framing.then(async () => {
 			if (printStamp) { await addPrintHoloStamp(...stampArgs); }
-			await addStampScans();
 			await addPrintBorderColor(listPrint, frame);
 			await addTheListStamp(listPrint);
 		});
@@ -1235,7 +1235,6 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 	if (addM15Stamp) {
 		await addPrintHoloStamp(plan.stamp, colors, manaCost, typeLine, power);
 	}
-	await addStampScans();
 	await addTheListStamp(print);
 	drawFrames();
 	return true;
@@ -1300,33 +1299,64 @@ function stampScanSource(kind) {
 	}
 	return stampScansFound[kind];
 }
-async function addStampScans() {
-	var added = [];
-	for (var stamp of card.frames.slice()) {
-		var kind = Object.keys(stampScanShapes).find(key => stampScanShapes[key].test(stamp.src || ''));
-		var scanSource = kind && stamp.bounds && /holo stamp/i.test(stamp.name) && !added.includes(kind) ? await stampScanSource(kind) : null;
-		if (!scanSource) {
-			continue;
-		}
-		added.push(kind); //a stamp split in two colors is two frames with one foil
-		var shape = stampScanShapes[kind];
-		var b = stamp.bounds;
-		var toCard = (x, y) => [b.x + x * b.width, b.y + y * b.height];
-		var corners = shape.ellipse ? [toCard(shape.ellipse.cx - shape.ellipse.rx, shape.ellipse.cy - shape.ellipse.ry), toCard(shape.ellipse.cx + shape.ellipse.rx, shape.ellipse.cy + shape.ellipse.ry)]
-			: [toCard(Math.min(...shape.points.map(p => p[0])), Math.min(...shape.points.map(p => p[1]))), toCard(Math.max(...shape.points.map(p => p[0])), Math.max(...shape.points.map(p => p[1])))];
-		//the mask covers the whole card (that's how frame masks are drawn), in thousandths of its width and height
-		var maskShape = shape.ellipse
-			? `<ellipse cx='${(corners[0][0] + corners[1][0]) * 500}' cy='${(corners[0][1] + corners[1][1]) * 500}' rx='${(corners[1][0] - corners[0][0]) * 500}' ry='${(corners[1][1] - corners[0][1]) * 500}' fill='white'/>`
-			: `<polygon points='${shape.points.map(p => toCard(p[0], p[1]).map(value => value * 1000).join(',')).join(' ')}' fill='white'/>`;
-		var mask = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='1000' height='1000' viewBox='0 0 1000 1000' preserveAspectRatio='none'>${maskShape}</svg>`);
-		var scanFrame = {name: 'Holo Stamp Scan', src: scanSource, noThumb: true, masks: [{src: mask, name: 'Foil'}],
-			bounds: {x: corners[0][0], y: corners[0][1], width: corners[1][0] - corners[0][0], height: corners[1][1] - corners[0][1]}};
-		card.frames.unshift(scanFrame);
-		await addFrame([], scanFrame);
+var stampScanImages = {}; //kind -> the loaded scan (null while it loads, or when there's none)
+function stampScanImage(kind) {
+	if (!(kind in stampScanImages)) {
+		stampScanImages[kind] = null;
+		stampScanSource(kind).then(source => {
+			if (source) {
+				var image = new Image();
+				image.onload = () => {
+					stampScanImages[kind] = image;
+					drawFrames();
+				};
+				image.src = fixUri(source);
+			}
+		});
 	}
-	if (added.length) {
-		drawFrames();
+	return stampScanImages[kind];
+}
+//The digital stamp with the scan in its foil, however the stamp was added (auto frame, frame pack, Frame tab). Drawn at four
+//times the stamp image's size so the scan keeps its detail; null when there's no scan for that stamp
+function stampWithScan(frame) {
+	var kind = Object.keys(stampScanShapes).find(key => stampScanShapes[key].test(frame.src || ''));
+	var stampImage = frame.image;
+	if (!kind || !stampImage || !stampImage.complete || !stampImage.naturalWidth) {
+		return null;
 	}
+	var scan = stampScanImage(kind);
+	if (!scan) {
+		return null;
+	}
+	if (stampImage.scanComposite && stampImage.scanComposite.scan == scan && stampImage.scanComposite.src == stampImage.src) {
+		return stampImage.scanComposite.canvas;
+	}
+	var canvas = document.createElement('canvas');
+	canvas.width = stampImage.naturalWidth * 4;
+	canvas.height = stampImage.naturalHeight * 4;
+	var context = canvas.getContext('2d');
+	context.imageSmoothingQuality = 'high';
+	context.drawImage(stampImage, 0, 0, canvas.width, canvas.height);
+	var shape = stampScanShapes[kind];
+	var w = canvas.width, h = canvas.height;
+	context.save();
+	context.beginPath();
+	var box;
+	if (shape.ellipse) {
+		var e = shape.ellipse;
+		context.ellipse(e.cx * w, e.cy * h, e.rx * w, e.ry * h, 0, 0, 2 * Math.PI);
+		box = [(e.cx - e.rx) * w, (e.cy - e.ry) * h, 2 * e.rx * w, 2 * e.ry * h];
+	} else {
+		shape.points.forEach((point, index) => index ? context.lineTo(point[0] * w, point[1] * h) : context.moveTo(point[0] * w, point[1] * h));
+		context.closePath();
+		var xs = shape.points.map(point => point[0] * w), ys = shape.points.map(point => point[1] * h);
+		box = [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+	}
+	context.clip();
+	context.drawImage(scan, ...box);
+	context.restore();
+	stampImage.scanComposite = {scan: scan, src: stampImage.src, canvas: canvas};
+	return canvas;
 }
 //"The List" reprints have the List icon at the bottom left
 function theListStampFrame(print) {
@@ -4033,7 +4063,10 @@ function writeText(textObject, targetContext) {
 		splitText = splitText.replace(/{flavor}/g, '{i}').replace(/{oldflavor}/g, '{i}');
 	} else {
 		//flavorGap 0: the flavor text starts on the next line, with no space before it (the original 1993 frame)
-		splitText = splitText.replace(/{flavor}/g, '{/indent}{lns}{bar}{lns}{fixtextalign}{i}').replace(/{oldflavor}/g, textObject.flavorGap === 0 ? '{/indent}{lns}{i}' : '{/indent}{lns}{lns}{up30}{i}');
+		//flavorBar false: no bar between the rules and the flavor text, just a space 0.6 of the text size taller than a line (2015
+		//frame cards printed before Dominaria; measured on Dispel BFZ 76 and Deadeye Quartermaster XLN 50)
+		var flavorStart = textObject.flavorBar === false ? '{/indent}{lns}{down' + Math.round(startingTextSize * 0.6) + '}{fixtextalign}{i}' : '{/indent}{lns}{bar}{lns}{fixtextalign}{i}';
+		splitText = splitText.replace(/{flavor}/g, flavorStart).replace(/{oldflavor}/g, textObject.flavorGap === 0 ? '{/indent}{lns}{i}' : '{/indent}{lns}{lns}{up30}{i}');
 	}
 	splitText = splitText.replace(/{/g, splitString + '{').replace(/}/g, '}' + splitString).replace(/ /g, splitString + ' ' + splitString).split(splitString);
 
@@ -5931,6 +5964,9 @@ function placePrintedRulesSpacing(print) {
 		rules.defaultSpacing = Object.fromEntries(Object.keys(printedRulesSpacing).map(key => [key, rules[key]]));
 	}
 	Object.assign(rules, print.frame == '2015' ? printedRulesSpacing : rules.defaultSpacing);
+	//the bar between the rules and the flavor text first appeared on Dominaria (April 2018): Rivals of Ixalan and Masters 25 have
+	//none, every set from Dominaria on has it (checked on three to four cards of each set from Khans of Tarkir to Dominaria United)
+	rules.flavorBar = print.frame == '2015' && (print.released_at || '9999') < '2018-04-27' ? false : undefined;
 }
 //White bordered 8th and 9th Edition prints have the artist and copyright lines on the border, in black instead of white
 //(older frames print them on the frame, in white). The frame's own colors are kept aside: the frame isn't reloaded between
