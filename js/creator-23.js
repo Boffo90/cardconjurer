@@ -6422,9 +6422,13 @@ function placeRetroTextSizes(print) {
 	}
 }
 //Rules text spacing measured on printed 2015 frame cards (Artillery Blast DMU 6, Razorgrass Ambush MH3 238, Kazuul's Fury ZNR 146):
-//lines sit ~3% closer than the frames' defaults, the flavor bar takes a little less room, text that doesn't fit shrinks
-//in half point steps (0.002 of the card's height), and closing quotes sit right after the period
-var printedRulesSpacing = {lineSpacing: -0.03, barSpacing: -0.13, sizeStep: 0.002, quoteKerning: -0.18};
+//lines sit ~3% closer than the frames' defaults, the flavor bar takes a little less room, and closing quotes sit right after the
+//period. Text that doesn't fit shrinks in quarter point steps (0.001 of the card's height) counted down from the box's size: on 275
+//printed cards of every set from Magic Origins to Reality Fracture, the regular size is the same in all of them and smaller ones
+//come in steps of ~0.001 (lines 0.0355, 0.0345, 0.0338, 0.0327, 0.0316... apart). With them, 19 of 28 cards measured take the
+//printed size and number of lines, against 8 with half point steps. The rest were set smaller by hand although they fit (e.g.
+//Theros Beyond Death's Altar of the Pantheon, five lines instead of seven), with no rule that holds for other cards
+var printedRulesSpacing = {lineSpacing: -0.03, barSpacing: -0.13, sizeStep: 0.001, sizeStepFromSize: true, quoteKerning: -0.18};
 function placePrintedRulesSpacing(print) {
 	var rules = card.text.rules;
 	if (!rules) {
