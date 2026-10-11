@@ -65,7 +65,7 @@ setSymbol.onerror = function() {
 	// a set that has no local symbol (e.g. a newer set): try Hexproof.io before giving up
 	var localSymbol = this.src.match(/\/img\/setSymbols\/official\/([^\/]+)-([^\/.-]+)\.\w+$/);
 	if (localSymbol) {
-		uploadSetSymbol('https://api.hexproof.io/symbols/set/' + localSymbol[1] + '/' + localSymbol[2], 'resetSetSymbol');
+		loadSetSymbolWithoutLocalFile(localSymbol[1], localSymbol[2]);
 		return;
 	}
 	if (this.src.includes('api.hexproof.io') || this.src.includes('svgs.scryfall.io')) {
@@ -74,6 +74,59 @@ setSymbol.onerror = function() {
 	if (!this.src.includes('/img/blank.png')) {this.src = fixUri('/img/blank.png');}
 }
 setSymbol.onload = setSymbolEdited;
+//A set with no local symbol: Hexproof.io's. Hexproof answers the sets it doesn't know yet (e.g. Reality Fracture) with a Magic logo
+//instead of an error: then Scryfall's icon, which is single color, in the rarity's colors (the gradients of the official files) with
+//an outline
+var hexproofUnknownSet = '4.521 6.462-12.02 10.703'; //a piece of that logo's path
+var rarityGradients = {u: ['#626E77', '#C7E1F1', '#C7E1F1'], r: ['#927443', '#D5B46D', '#927443'], m: ['#C03726', '#F5951D', '#C03726'], s: ['#652978', '#C79FD4', '#652978']};
+async function loadSetSymbolWithoutLocalFile(setCode, rarity) {
+	var hexproofURL = 'https://api.hexproof.io/symbols/set/' + setCode + '/' + rarity;
+	try {
+		var hexproof = await (await fetch(hexproofURL)).text();
+		if (!hexproof.includes(hexproofUnknownSet)) {
+			uploadSetSymbol(hexproofURL, 'resetSetSymbol');
+			return;
+		}
+		var scryfallIcon = await fetch('https://svgs.scryfall.io/sets/' + setCode + '.svg');
+		if (!scryfallIcon.ok) {
+			throw new Error('No Scryfall icon for ' + setCode);
+		}
+		uploadSetSymbol('data:image/svg+xml,' + encodeURIComponent(raritySetSymbol(await scryfallIcon.text(), rarity)), 'resetSetSymbol');
+	} catch (error) {
+		uploadSetSymbol(hexproofURL, 'resetSetSymbol');
+	}
+}
+function raritySetSymbol(svgText, rarity) {
+	var ns = 'http://www.w3.org/2000/svg';
+	var svg = new DOMParser().parseFromString(svgText, 'image/svg+xml').documentElement;
+	var viewBox = (svg.getAttribute('viewBox') || `0 0 ${parseFloat(svg.getAttribute('width')) || 100} ${parseFloat(svg.getAttribute('height')) || 100}`).split(/[\s,]+/).map(Number);
+	var outline = Math.min(viewBox[2], viewBox[3]) * 0.035;
+	var grown = [viewBox[0] - outline, viewBox[1] - outline, viewBox[2] + 2 * outline, viewBox[3] + 2 * outline];
+	svg.setAttribute('viewBox', grown.join(' '));
+	svg.setAttribute('width', grown[2]);
+	svg.setAttribute('height', grown[3]);
+	svg.querySelectorAll('[fill], [style]').forEach(shape => { shape.removeAttribute('fill'); shape.removeAttribute('style'); });
+	var colors = rarityGradients[rarity];
+	if (colors) {
+		var defs = document.createElementNS(ns, 'defs');
+		var gradient = document.createElementNS(ns, 'linearGradient');
+		Object.entries({id: 'rarity', x1: 0, y1: 0, x2: 0, y2: 1}).forEach(([key, value]) => gradient.setAttribute(key, value));
+		[[colors[0], 0], [colors[1], rarity == 'u' ? 0.4 : 0.2], [colors[1], 0.8], [colors[2], 1]].forEach(([color, offset]) => {
+			var stop = document.createElementNS(ns, 'stop');
+			stop.setAttribute('offset', offset);
+			stop.setAttribute('stop-color', color);
+			gradient.appendChild(stop);
+		});
+		defs.appendChild(gradient);
+		svg.insertBefore(defs, svg.firstChild);
+	}
+	//the outline is drawn under the fill: half of it shows around the symbol (black, white around the black of commons)
+	var group = document.createElementNS(ns, 'g');
+	Object.entries({fill: colors ? 'url(#rarity)' : '#000', stroke: colors ? '#000' : '#fff', 'stroke-width': outline * 2, 'stroke-linejoin': 'round', 'paint-order': 'stroke'}).forEach(([key, value]) => group.setAttribute(key, value));
+	Array.from(svg.childNodes).filter(node => node.nodeName != 'defs').forEach(node => group.appendChild(node));
+	svg.appendChild(group);
+	return new XMLSerializer().serializeToString(svg);
+}
 //watermark
 watermark = new Image(); watermark.crossOrigin = 'anonymous'; watermark.src = blank.src;
 watermark.onerror = function() {if (!this.src.includes('/img/blank.png')) {this.src = fixUri('/img/blank.png');}}
@@ -792,6 +845,11 @@ function autoFrame() {
 	var otherLanguagePrint = printPlan && autoFramePrint && autoFramePrint.english_type_line ? autoFramePrint : null;
 	if (otherLanguagePrint) {
 		typeText = otherLanguagePrint.english_type_line;
+	}
+	//the legend crown only on the prints that have it (Scryfall marks them): not on legendary cards printed before Dominaria
+	//(Commander 2016 Silas Renn) nor on The List's reprints of them
+	if (printPlan && autoFramePrint && autoFramePrint.frame == '2015' && !(autoFramePrint.frame_effects || []).includes('legendary')) {
+		typeText = typeText.replace(/\bLegendary ?/g, '');
 	}
 
 	var colors = [];
@@ -6137,6 +6195,83 @@ function applyLearnedPrintedText(print, replicatePrint) {
 		}
 	}
 }
+//The collector line's separator: a star (foil) or a dot, whichever the print has (see toggleStarDot)
+function setCollectorStar(star) {
+	var texts = Object.values(card.bottomInfo || {}).map(textObject => textObject.text || '');
+	var hasDot = texts.some(text => text.includes(' • '));
+	var hasStar = !hasDot && texts.some(text => text.includes('*'));
+	if ((star && hasDot) || (!star && hasStar)) {
+		toggleStarDot();
+	}
+}
+//The print's watermark (Scryfall's name for it), in the color of its frame like the printed ones; a print without one clears the
+//previous card's. Local files first, else the Magic vector collection Card Conjurer's author keeps (mtg-vectors); set watermarks
+//are the set's symbol (Keyrune)
+var localWatermarks = {foretell: 'ability-foretell', desparked: 'desparked-planeswalker', dci: 'misc-dci', phyrexian: 'phyrexian', mirran: 'mirran', planeswalker: 'planeswalker', agentsofsneak: 'faction-agents-of-sneak', crossbreedlabs: 'faction-crossbreed-labs', goblinexplosioneers: 'faction-goblin-explosioneers', leagueofdastardlydoom: 'faction-league-of-dastardly-doom', orderofthewidget: 'faction-order-of-the-widget', akros: 'polis-akros', meletis: 'polis-meletis', setessa: 'polis-setessa'};
+['azorius', 'boros', 'dimir', 'golgari', 'gruul', 'izzet', 'orzhov', 'rakdos', 'selesnya', 'simic'].forEach(name => localWatermarks[name] = 'guild-' + name);
+['abzan', 'atarka', 'dromoka', 'jeskai', 'kolaghan', 'mardu', 'ojutai', 'silumgar', 'sultai', 'temur'].forEach(name => localWatermarks[name] = 'clan-' + name);
+['lorehold', 'prismari', 'quandrix', 'silverquill', 'witherbloom'].forEach(name => localWatermarks[name] = 'school-' + name);
+['brokers', 'cabaretti', 'maestros', 'obscura', 'riveteers'].forEach(name => localWatermarks[name] = 'family-' + name);
+var watermarkAliases = {echoverse: 'fracture'}; //Reality Fracture's, named differently by Scryfall and mtg-vectors
+//colors that give, at the Watermark tab's 40% opacity, the shade printed on each text box (measured on six 2015 frame cards of each
+//color, most of them Reality Fracture's): a darker tone of the box's own color
+var watermarkFrameColors = {W: '#857d46', U: '#4a7a98', B: '#635e5c', R: '#9f4e36', G: '#54805e', M: '#8e7117', A: '#365562', L: '#5e5448'};
+var printWatermarkRequest = 0;
+async function applyPrintWatermark(print) {
+	var request = ++printWatermarkRequest;
+	var name = (print.watermark || '').toLowerCase().replace(/[^a-z0-9&]/g, '');
+	var setColor = color => {
+		card.watermarkLeft = color;
+		card.watermarkRight = 'none';
+		document.querySelector('#watermark-left').value = color;
+		document.querySelector('#watermark-right').value = 'none';
+	};
+	if (!name) {
+		setColor('none');
+		uploadWatermark(blank.src);
+		return;
+	}
+	var url = localWatermarks[name] ? fixUri('/img/watermarks/' + localWatermarks[name] + '.svg')
+		: name == 'set' ? 'https://cdn.jsdelivr.net/npm/keyrune/svg/' + (print.set || '').toLowerCase() + '.svg'
+		: 'https://cdn.jsdelivr.net/gh/Investigamer/mtg-vectors@main/svg/optimized/watermark/' + encodeURIComponent(watermarkAliases[name] || name) + '.svg';
+	try {
+		var response = await fetch(url);
+		if (!response.ok) {
+			throw new Error('No watermark file for ' + name);
+		}
+		var svgText = await response.text();
+		if (request != printWatermarkRequest) {
+			return; //another card was imported meanwhile
+		}
+		//cropped to its drawing, like the watermarks picked in the Watermark tab (getSetSymbolWatermark)
+		var svg = document.body.appendChild(new DOMParser().parseFromString(svgText, 'image/svg+xml').documentElement);
+		var box = svg.getBBox();
+		svg.setAttribute('viewBox', [box.x, box.y, box.width, box.height].join(' '));
+		svg.setAttribute('width', box.width);
+		svg.setAttribute('height', box.height);
+		var source = 'data:image/svg+xml,' + encodeURIComponent(svg.outerHTML);
+		svg.remove();
+		var colors = (print.colors || []).filter(color => 'WUBRG'.includes(color));
+		var typeLine = print.english_type_line || print.type_line || '';
+		setColor(watermarkFrameColors[colors.length > 1 ? 'M' : colors.length == 1 ? colors[0] : typeLine.includes('Land') ? 'L' : 'A']);
+		//two color cards (gold or hybrid): each half of the watermark in one of the colors, in the mana cost's order (Hypothesizzle,
+		//{3}{U}{R}: blue on the left, red on the right)
+		var costColors = [...new Set((print.mana_cost || '').toUpperCase().match(/[WUBRG]/g) || [])];
+		var pair = costColors.length == 2 ? costColors : colors.length == 2 ? colors : null;
+		if (pair) {
+			setColor(watermarkFrameColors[pair[0]]);
+			card.watermarkRight = watermarkFrameColors[pair[1]];
+			document.querySelector('#watermark-right').value = card.watermarkRight;
+		}
+		uploadWatermark(source, 'resetWatermark');
+	} catch (error) {
+		if (request == printWatermarkRequest) {
+			setColor('none');
+			uploadWatermark(blank.src);
+			notify(`Auto frame: this card has a watermark ("${print.watermark}") that couldn't be loaded. You can pick one in the Watermark tab.`, 6);
+		}
+	}
+}
 function applyPrintCopyrightLines(print) {
 	var lines = [];
 	if ((print.promo_types || []).includes('universesbeyond')) {
@@ -6738,7 +6873,10 @@ async function changeCardIndex() {
 		}
 		document.querySelector('#info-note').value = cardToImport.story_spotlight ? 'Story Spotlight' : '';
 		applyPrintCopyrightLines(cardToImport);
+		//prints made only in foil show a star between the set and the language ("C16 ★ EN") instead of the dot
+		setCollectorStar(!(cardToImport.finishes || ['nonfoil']).includes('nonfoil'));
 		bottomInfoEdited();
+		applyPrintWatermark(cardToImport);
 	}
 	if (localStorage.getItem('enableImportCollectorInfo') == 'true' || replicatePrint) {
 		document.querySelector('#info-number').value = printNumber;
