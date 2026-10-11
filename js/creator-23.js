@@ -2810,15 +2810,16 @@ function makeBorderlessFrameByLetter(letter, mask = false, maskToRightHalf = fal
 	return frame;
 }
 //The 2003 frame (8th Edition to Magic 2015) as printed, from two printed cards of each color in twelve sets, Mirrodin to Theros
-//(the median: Ravnica's, Innistrad's and Theros' scans have every box much lighter): the boxes 3-13% darker than ours, the white
-//frame darker and the blue one less saturated. The gold frames vary too much (hybrids, guilds) and keep their colors
+//(the median: Ravnica's, Innistrad's and Theros' scans have every box much lighter). Text boxes 3-13% darker than ours. Frames
+//measured on their texture below the text box, left of the power/toughness box (noncreature cards): lighter and less saturated
+//than ours, except the blue one, already close. The gold frames vary too much (hybrids, guilds) and keep their colors
 var eighthFrameColors = {
-	W: {frame: {scale: [1.3, 1.3, 1.3], offset: [-103, -105, -108]}, box: {scale: [0.975, 0.954, 0.959], offset: [0, 0, 0]}},
-	U: {frame: {scale: [0.7, 0.7, 0.982], offset: [-3, 3, -45]}, box: {scale: [0.907, 0.9, 0.917], offset: [0, 0, 0]}},
-	B: {frame: {scale: [0.7, 0.7, 0.7], offset: [19, 22, 18]}, box: {scale: [0.94, 0.921, 0.917], offset: [0, 0, 0]}},
-	R: {frame: {scale: [1.3, 0.7, 0.7], offset: [-17, 25, 17]}, box: {scale: [0.934, 0.867, 0.87], offset: [0, 0, 0]}},
-	G: {frame: {scale: [1, 1.088, 0.889], offset: [1, 1, 9]}, box: {scale: [1, 0.993, 1.03], offset: [0, 0, 0]}},
-	A: {frame: {scale: [1.3, 1.3, 1.3], offset: [-12, -14, -22]}, box: {scale: [1.115, 1.105, 1.127], offset: [0, 0, 0]}}
+	W: {frame: {scale: [0.7, 0.7, 0.7], offset: [117, 87, 69]}, box: {scale: [0.975, 0.954, 0.959], offset: [0, 0, 0]}},
+	U: {frame: {scale: [0.7, 0.7, 0.7], offset: [27, 52, 81]}, box: {scale: [0.907, 0.9, 0.917], offset: [0, 0, 0]}},
+	B: {frame: {scale: [0.867, 1, 0.947], offset: [21, 22, 20]}, box: {scale: [0.94, 0.921, 0.917], offset: [0, 0, 0]}},
+	R: {frame: {scale: [0.7, 0.864, 0.7], offset: [113, 36, 32]}, box: {scale: [0.934, 0.867, 0.87], offset: [0, 0, 0]}},
+	G: {frame: {scale: [0.7, 0.7, 0.7], offset: [60, 74, 44]}, box: {scale: [1, 0.993, 1.03], offset: [0, 0, 0]}},
+	A: {frame: {scale: [0.7, 0.7, 0.7], offset: [62, 69, 70]}, box: {scale: [1.115, 1.105, 1.127], offset: [0, 0, 0]}}
 };
 function make8thEditionFrameByLetter(letter, mask = false, maskToRightHalf = false, style = 'regular') {
 	letter = letter.toUpperCase();
