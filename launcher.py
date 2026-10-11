@@ -22,6 +22,12 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
 
+    # The browser asks again for every file on each load (unchanged files answer "304 Not Modified"), so an updated
+    # Card Conjurer shows right away instead of an old cached copy of its scripts
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
 """
 START APP
 """
