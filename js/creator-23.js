@@ -65,6 +65,7 @@ setSymbol.onerror = function() {
 	// a set that has no local symbol (e.g. a newer set): try Hexproof.io before giving up
 	var localSymbol = this.src.match(/\/img\/setSymbols\/official\/([^\/]+)-([^\/.-]+)\.\w+$/);
 	if (localSymbol) {
+		this.src = fixUri('/img/blank.png'); //not left broken (drawCard can't draw it) while the other sources are asked
 		loadSetSymbolWithoutLocalFile(localSymbol[1], localSymbol[2]);
 		return;
 	}
@@ -3609,6 +3610,26 @@ var seventhSetColors = {
 	}},
 	tsr: {L: {frame: {scale: [0.7, 0.7, 0.819], offset: [81, 66, 40]}, box: null}}
 };
+//Black cards printed from Nemesis to Scourge (four printed cards of each set, all alike within a set): a paler parchment (Odyssey's
+//Tainted Pact 231,184,147 against Visions' 228,177,132), much lighter from Onslaught on, and frames of other shades (Onslaught's
+//darker, 7th Edition's greener)
+function seventhBlackForSet(boxScale, frameOffset) {
+	var frame = {scale: seventhBlackColors.frame.scale, offset: frameOffset};
+	return {B: {frame: frame, box: Object.assign({}, seventhBlackColors.parchment, {scale: boxScale, dark: frame})}};
+}
+Object.assign(seventhSetColors, {
+	nem: seventhBlackForSet([0.965, 0.927, 1.071], [11, 23, 15]),
+	pcy: seventhBlackForSet([0.932, 0.864, 0.95], [9, 21, 14]),
+	pls: seventhBlackForSet([0.953, 0.892, 0.985], [8, 21, 13]),
+	apc: seventhBlackForSet([0.966, 0.898, 0.975], [9, 19, 11]),
+	'7ed': seventhBlackForSet([0.913, 0.88, 0.992], [9, 32, 25]),
+	ody: seventhBlackForSet([0.984, 0.917, 1.009], [-1, 19, 20]),
+	tor: seventhBlackForSet([0.947, 0.883, 0.976], [4, 24, 22]),
+	jud: seventhBlackForSet([0.969, 0.913, 0.961], [5, 22, 20]),
+	ons: seventhBlackForSet([1.047, 1, 0.992], [-14, 0, 3]),
+	lgn: seventhBlackForSet([1.057, 0.962, 0.926], [-6, 11, 4]),
+	scg: seventhBlackForSet([1.017, 0.98, 0.913], [-8, 8, 4])
+});
 //A frame image with its rgbAdjust applied (computed once per image and adjustment), or null when the frame has none
 function adjustedFrameImage(frame) {
 	var image = frame.image;
@@ -4855,6 +4876,11 @@ function writeText(textObject, targetContext) {
 				if (textObject.sizeStep && startingTextSize < scaleHeight(textObject.size) * 0.98) {
 					var sizeStep = textObject.sizeStep * card.height;
 					var steppedSize = Math.floor(startingTextSize / sizeStep + 0.000001) * sizeStep;
+					if (textObject.sizeStepFromSize) {
+						//steps counted down from the box's size (9, 8.5, 8 points...) instead of from zero
+						var fullSize = scaleHeight(textObject.size);
+						steppedSize = fullSize - Math.ceil((fullSize - startingTextSize) / sizeStep - 0.000001) * sizeStep;
+					}
 					if (steppedSize > 1 && steppedSize < startingTextSize - 0.01) {
 						startingTextSize = steppedSize;
 						continue outerloop;
@@ -5809,7 +5835,9 @@ function drawCard() {
 	// text
 	cardContext.drawImage(textCanvas, 0, 0, cardCanvas.width, cardCanvas.height);
 	// set symbol
-	cardContext.drawImage(setSymbol, scaleX(card.setSymbolX), scaleY(card.setSymbolY), setSymbol.width * card.setSymbolZoom, setSymbol.height * card.setSymbolZoom)
+	if (setSymbol.complete && setSymbol.naturalWidth) {
+		cardContext.drawImage(setSymbol, scaleX(card.setSymbolX), scaleY(card.setSymbolY), setSymbol.width * card.setSymbolZoom, setSymbol.height * card.setSymbolZoom);
+	}
 	// serial
 	if (card.serialNumber || card.serialTotal) {
 		var x = parseInt(card.serialX) || 172;
@@ -6329,6 +6357,14 @@ function retroCopyrightLine(print) {
 //Rhystic Study, Crystal Spray, Advance Scout, Argothian Elder, Afterlife, Staunch Defenders, Sphere of Law and Steadfast Guard
 //break into as many lines as printed
 var retroTextSizes = {title: {size: 0.039}, type: {size: 0.0307}, rules: {size: 0.0337, kerning: -0.0008, x: 0.128, width: 0.742}};
+//The 1997 frame's rules text, measured on 100 printed cards from Mirage to Scourge: it was set solid in half point steps, lines
+//0.0362, 0.0343, 0.0323 or 0.0302 apart (x-heights of 0.016, 0.0149, 0.0141 and 0.0131), each card in the largest step that fits.
+//Short texts are printed larger than Card Conjurer's default, long ones go down a whole step (Odyssey's Tainted Pact: 0.0323, in
+//eight lines as printed). Ten of thirteen cards measured take the printed size and number of lines; our letters w, m and y are a
+//little wider than the printed ones, so some lines still break a word earlier
+var seventhRulesText = {size: 0.0362, sizeStep: 0.002, sizeStepFromSize: true, kerning: -0.0005, x: 0.126, width: 0.746};
+//and its title, ~3.5% wider than ours at the same height (its letters further apart), a little more to the left and higher
+var seventhTitleText = {x: 0.1105, y: 0.0461, kerning: 0.0008};
 //Long texts on the original frame (Ice Age Necropotence and Amulet of Quoz, ~320 characters) aren't shrunk to fit: they're set in
 //a much smaller font (a 0.0102 x-height against 0.0145) with more space between the lines (0.0278 apart against 0.032), and without
 //the wider letter spacing of the regular size. Necropotence breaks into the same seven lines as printed
@@ -6345,6 +6381,12 @@ function placeRetroTextSizes(print) {
 	//the original (1993) frame, measured on Ice Age Mystic Remora and 4th Edition Erosion and Shivan Dragon: smaller rules text in a
 	//narrower column, no extra space between paragraphs, and the title a little lower than the frame's default. The font printed
 	//then is ~8% wider than ours at the same size (the opposite of later cards), hence the letter spacing
+	if (print.frame == '1997') {
+		Object.assign(card.text.rules || {}, seventhRulesText);
+		Object.assign(card.text.title || {}, seventhTitleText);
+	} else {
+		Object.assign(card.text.rules || {}, {sizeStep: 0, sizeStepFromSize: false});
+	}
 	if (print.frame == '1993') {
 		Object.assign(card.text.rules || {}, {size: 0.0317, x: 0.15, width: 0.70, kerning: 0.0008, paragraphSpacing: 0, flavorGap: 0, smallTier: retroLongTextTier});
 		Object.assign(card.text.title || {}, {y: 0.036});
