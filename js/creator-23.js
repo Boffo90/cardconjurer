@@ -335,6 +335,10 @@ loadManaSymbols(['wu', 'wb', 'ub', 'ur', 'br', 'bg', 'rg', 'rw', 'gw', 'gu', '2w
 				 '2purple', 'purplep', 'cw', 'cu', 'cb', 'cr', 'cg'], [1.2, 1.2]);
 loadManaSymbols(['bar.png', 'whitebar.png']);
 loadManaSymbols(true, ['chaos'], [1.2, 1]);
+//as printed on old cards (manaPrefix): Alpha to Unlimited's, and the classic ones from Revised to Scourge (the skull before its
+//redraw, paler circles)
+loadManaSymbols(['old/oldw', 'old/oldu', 'old/oldb', 'old/oldr', 'old/oldg']);
+loadManaSymbols(['w', 'u', 'b', 'r', 'g', 'x', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15', '16', '17', '18', '19', '20'].map(code => 'classic/classic' + code));
 loadManaSymbols(true, ['tk'], [0.8, 1]);
 loadManaSymbols(true, ['planeswalker'], [0.6, 1.2]);
 loadManaSymbols(true, ['+1', '+2', '+3', '+4', '+5', '+6', '+7', '+8', '+9', '-1', '-2', '-3', '-4', '-5', '-6', '-7', '-8', '-9', '+0'], [1.6, 1]);
@@ -2003,6 +2007,22 @@ async function autoSeventhEditionFrame(colors, mana_cost, type_line, power) {
 	await card.frames.forEach(item => addFrame([], item));
 	card.frames.reverse();
 }
+//The original (1993) frame as printed (Ice Age, Alliances, Homelands, Fallen Empires): each color's frame and text box (one image,
+//the box being its region) and the black border
+//Measured on six printed cards of each color (lands vary too much from set to set, they keep their colors): the borders aren't pure
+//black (32,32,32) and the text boxes are 5-20% darker, the gold one pinker
+var fourthBoxRegion = {x0: 0.1, y0: 0.585, x1: 0.9, y1: 0.915, darkBelow: 60, lightAbove: 140};
+var fourthBox = scale => Object.assign({scale: scale, offset: [0, 0, 0]}, fourthBoxRegion);
+var fourthFrameColors = {
+	border: {scale: [1, 1, 1], offset: [32, 32, 32]},
+	W: {scale: [0.98, 1.078, 1.157], offset: [-2, -21, -37], region: fourthBox([0.922, 0.928, 0.929])},
+	U: {scale: [1.3, 1.192, 1.214], offset: [-11, -51, -73], region: fourthBox([0.864, 0.9, 0.925])},
+	B: {scale: [1.03, 0.844, 0.74], offset: [-8, -6, 5], region: fourthBox([0.898, 0.957, 0.99])},
+	R: {scale: [1.061, 0.974, 1.012], offset: [-61, -5, 4], region: fourthBox([0.822, 0.864, 0.859])},
+	G: {scale: [1.3, 1.3, 1.143], offset: [-25, -53, -22], region: fourthBox([0.825, 0.874, 0.965])},
+	M: {scale: [0.88, 0.956, 0.7], offset: [-26, -42, 9], region: fourthBox([0.851, 0.809, 0.909])},
+	A: {scale: [1.067, 1.026, 1.079], offset: [-27, -17, -20], region: fourthBox([0.923, 0.935, 0.928])}
+};
 //The original (1993) frame: one image per color, and a black or white border
 async function autoFourthFrame(colors, mana_cost, type_line, power) {
 	card.frames = [];
@@ -2016,6 +2036,16 @@ async function autoFourthFrame(colors, mana_cost, type_line, power) {
 		{name: (white ? 'White' : 'Black') + ' Border', src: '/img/frames/old/fourth/border' + (white ? 'White' : 'Black') + '.png', masks: []},
 		{name: colorName + ' Frame', src: '/img/frames/old/fourth/' + {White: 'w', Blue: 'u', Black: 'b', Red: 'r', Green: 'g', Multicolored: 'm', Artifact: 'a', Land: 'l'}[colorName] + '.png', masks: []}
 	];
+	//colors as printed (see fourthFrameColors), for imported prints
+	if (document.querySelector('#autoFrame').value == 'FromPrint' && autoFramePrint) {
+		var frameLetter = {White: 'W', Blue: 'U', Black: 'B', Red: 'R', Green: 'G', Multicolored: 'M', Artifact: 'A', Land: 'L'}[colorName];
+		if (!white && fourthFrameColors.border) {
+			frames[0].rgbAdjust = fourthFrameColors.border;
+		}
+		if (fourthFrameColors[frameLetter]) {
+			frames[1].rgbAdjust = fourthFrameColors[frameLetter];
+		}
+	}
 	card.frames = frames;
 	card.frames.reverse();
 	await card.frames.forEach(item => addFrame([], item));
@@ -3539,7 +3569,21 @@ function adjustedFrameImage(frame) {
 	try {
 		var data = context.getImageData(0, 0, canvas.width, canvas.height);
 		var pixels = data.data, adjust = frame.rgbAdjust, scale = adjust.scale, offset = adjust.offset, dark = adjust.dark;
+		//region: a part of the image (the text box of the original frame, drawn in the same image as the frame) with its own
+		//adjustment for its light pixels; its dark ones (the box's burned edges) keep the frame's
+		var region = adjust.region, regionRect = region ? [region.x0 * canvas.width, region.y0 * canvas.height, region.x1 * canvas.width, region.y1 * canvas.height] : null;
 		for (var i = 0; i < pixels.length; i += 4) {
+			if (region) {
+				var pixel = i / 4, pixelX = pixel % canvas.width, pixelY = Math.floor(pixel / canvas.width);
+				if (pixelX >= regionRect[0] && pixelX < regionRect[2] && pixelY >= regionRect[1] && pixelY < regionRect[3]) {
+					var regionLight = Math.min(1, Math.max(0, ((pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3 - region.darkBelow) / (region.lightAbove - region.darkBelow)));
+					for (var regionChannel = 0; regionChannel < 3; regionChannel ++) {
+						var regionValue = pixels[i + regionChannel];
+						pixels[i + regionChannel] = (regionValue * region.scale[regionChannel] + region.offset[regionChannel]) * regionLight + (regionValue * scale[regionChannel] + offset[regionChannel]) * (1 - regionLight);
+					}
+					continue;
+				}
+			}
 			//share of the light adjustment: 1, unless the adjustment has a different one for dark pixels
 			var light = 1;
 			if (dark) {
@@ -4275,6 +4319,10 @@ function writeText(textObject, targetContext) {
 	}
 	//Manages the redraw loop
 	var drawingText = true;
+	//smallTier ({size, lineSpacing}): text that doesn't fit at its size goes straight to a smaller one with more space between its
+	//lines, as printed cards of some eras set long texts, before shrinking pixel by pixel
+	var lineSpacingRatio = textObject.lineSpacing || 0;
+	var smallTierUsed = false;
 	//Repeatedly tries to draw the text at smaller and smaller sizes until it fits
 	outerloop: while (drawingText) {
 		//Rest of the text info loaded that may have been changed by a previous attempt at drawing the text
@@ -4316,14 +4364,14 @@ function writeText(textObject, targetContext) {
 		var lastLetterWritten = '';
 		//variables that track various... things?
 		var textSize = startingTextSize;
-		var newLineSpacing = (textObject.lineSpacing || 0) * textSize;
+		var newLineSpacing = lineSpacingRatio * textSize;
 		var ptShift = [0, 0];
 		var permaShift = [0, 0];
 		var fillJustify = false;
 		//Finish prepping canvases
 		paragraphContext.clearRect(0, 0, paragraphCanvas.width, paragraphCanvas.height);
 		lineContext.clearRect(0, 0, lineCanvas.width, lineCanvas.height);
-		lineContext.letterSpacing = (scaleWidth(textObject.kerning) || 0) + 'px';
+		lineContext.letterSpacing = (scaleWidth(smallTierUsed && 'kerning' in textObject.smallTier ? textObject.smallTier.kerning : textObject.kerning) || 0) + 'px';
 		// if (textFont == 'goudymedieval') {
 		// 	lineCanvas.style.letterSpacing = '3.5px';
 		// }
@@ -4586,7 +4634,7 @@ function writeText(textObject, targetContext) {
 						lineContext.clearRect(0, 0, lineCanvas.width, lineCanvas.height);
 						currentX = startingCurrentX;
 						currentY += textSize + newLineSpacing;
-						newLineSpacing = (textObject.lineSpacing || 0) * textSize;
+						newLineSpacing = lineSpacingRatio * textSize;
 					}
 					var manaSymbolX = currentX + canvasMargin + manaSymbolSpacing;
 					var manaSymbolY = canvasMargin + textSize * 0.34 - manaSymbolHeight / 2;
@@ -4698,7 +4746,7 @@ function writeText(textObject, targetContext) {
 				//reset
 				currentX = startingCurrentX;
 				currentY += textSize + newLineSpacing;
-				newLineSpacing = (textObject.lineSpacing || 0) * textSize;
+				newLineSpacing = lineSpacingRatio * textSize;
 				newLine = false;
 			}
 			//if there's a word to write, it's not a space on a new line, and it's allowed to write words, then we write the word
@@ -4734,6 +4782,12 @@ function writeText(textObject, targetContext) {
 			}
 			if (currentY > textHeight && textBounded && !textOneLine && startingTextSize > 1 && textArcRadius == 0) {
 				//doesn't fit... try again at a smaller text size?
+				if (textObject.smallTier && !smallTierUsed) {
+					smallTierUsed = true;
+					startingTextSize = Math.min(startingTextSize - 1, scaleHeight(textObject.smallTier.size));
+					lineSpacingRatio = textObject.smallTier.lineSpacing || 0;
+					continue outerloop;
+				}
 				startingTextSize -= 1;
 				continue outerloop;
 			}
@@ -6140,6 +6194,10 @@ function retroCopyrightLine(print) {
 //Rhystic Study, Crystal Spray, Advance Scout, Argothian Elder, Afterlife, Staunch Defenders, Sphere of Law and Steadfast Guard
 //break into as many lines as printed
 var retroTextSizes = {title: {size: 0.039}, type: {size: 0.0307}, rules: {size: 0.0337, kerning: -0.0008, x: 0.128, width: 0.742}};
+//Long texts on the original frame (Ice Age Necropotence and Amulet of Quoz, ~320 characters) aren't shrunk to fit: they're set in
+//a much smaller font (a 0.0102 x-height against 0.0145) with more space between the lines (0.0278 apart against 0.032), and without
+//the wider letter spacing of the regular size. Necropotence breaks into the same seven lines as printed
+var retroLongTextTier = {size: 0.023, lineSpacing: 0.246, kerning: 0};
 function placeRetroTextSizes(print) {
 	if (!['1993', '1997'].includes(print.frame)) {
 		return;
@@ -6153,15 +6211,30 @@ function placeRetroTextSizes(print) {
 	//narrower column, no extra space between paragraphs, and the title a little lower than the frame's default. The font printed
 	//then is ~8% wider than ours at the same size (the opposite of later cards), hence the letter spacing
 	if (print.frame == '1993') {
-		Object.assign(card.text.rules || {}, {size: 0.0317, x: 0.15, width: 0.70, kerning: 0.0008, paragraphSpacing: 0, flavorGap: 0});
+		Object.assign(card.text.rules || {}, {size: 0.0317, x: 0.15, width: 0.70, kerning: 0.0008, paragraphSpacing: 0, flavorGap: 0, smallTier: retroLongTextTier});
 		Object.assign(card.text.title || {}, {y: 0.036});
+		//the mana cost a little lower and more spread out than the frame's default (Necropotence: centers 0.0063 lower, 0.0038 apart)
+		Object.assign(card.text.mana || {}, {y: 0.0425, manaSpacing: 0.0019});
 	}
+	//mana symbols as printed then: the classic skull and paler circles from Revised to Scourge, Alpha's own before
+	var classicSymbols = (print.released_at || '9999') < '2003-07-01';
+	var prefix = classicSymbols ? ((print.released_at || '') < '1994-04-01' ? 'old' : 'classic') : null;
+	[card.text.mana, card.text.rules].filter(textBox => textBox).forEach(textBox => {
+		if (prefix) {
+			textBox.manaPrefix = prefix;
+		} else {
+			delete textBox.manaPrefix;
+		}
+	});
 	//the first core sets set rules text without flavor text as large as the box allows (Revised Wheel of Fortune and Wrath of God
 	//0.044, 4th Edition Erosion and Sindbad 0.040; long ones shrink to fit) in a narrower column, and cards with flavor text small
 	//(Revised Sedge Troll 0.028, 4th Edition Shivan Dragon, Serra Angel and Grizzly Bears 0.032)
 	var set = (print.set || '').toLowerCase();
 	var revisedOrOlder = ['lea', 'leb', '2ed', 'ced', 'cei', '3ed', 'fbb', 'sum'].includes(set);
 	var flavor = !!print.flavor_text;
+	if (['4ed', 'chr'].includes(set) || revisedOrOlder) {
+		delete (card.text.rules || {}).smallTier;
+	}
 	if ((revisedOrOlder || set == '4ed') && card.text.rules) {
 		//the large text keeps the tighter letter spacing it was measured with (Wheel of Fortune, Erosion)
 		var large = {kerning: -0.0008};
