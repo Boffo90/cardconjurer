@@ -2809,6 +2809,17 @@ function makeBorderlessFrameByLetter(letter, mask = false, maskToRightHalf = fal
 
 	return frame;
 }
+//The 2003 frame (8th Edition to Magic 2015) as printed, from two printed cards of each color in twelve sets, Mirrodin to Theros
+//(the median: Ravnica's, Innistrad's and Theros' scans have every box much lighter): the boxes 3-13% darker than ours, the white
+//frame darker and the blue one less saturated. The gold frames vary too much (hybrids, guilds) and keep their colors
+var eighthFrameColors = {
+	W: {frame: {scale: [1.3, 1.3, 1.3], offset: [-103, -105, -108]}, box: {scale: [0.975, 0.954, 0.959], offset: [0, 0, 0]}},
+	U: {frame: {scale: [0.7, 0.7, 0.982], offset: [-3, 3, -45]}, box: {scale: [0.907, 0.9, 0.917], offset: [0, 0, 0]}},
+	B: {frame: {scale: [0.7, 0.7, 0.7], offset: [19, 22, 18]}, box: {scale: [0.94, 0.921, 0.917], offset: [0, 0, 0]}},
+	R: {frame: {scale: [1.3, 0.7, 0.7], offset: [-17, 25, 17]}, box: {scale: [0.934, 0.867, 0.87], offset: [0, 0, 0]}},
+	G: {frame: {scale: [1, 1.088, 0.889], offset: [1, 1, 9]}, box: {scale: [1, 0.993, 1.03], offset: [0, 0, 0]}},
+	A: {frame: {scale: [1.3, 1.3, 1.3], offset: [-12, -14, -22]}, box: {scale: [1.115, 1.105, 1.127], offset: [0, 0, 0]}}
+};
 function make8thEditionFrameByLetter(letter, mask = false, maskToRightHalf = false, style = 'regular') {
 	letter = letter.toUpperCase();
 	var frameNames = {
@@ -2886,6 +2897,13 @@ function make8thEditionFrameByLetter(letter, mask = false, maskToRightHalf = fal
 		}
 	} else {
 		frame.masks = [];
+	}
+	//colors as printed (see eighthFrameColors), for imported prints of the 2003 frame
+	var replicated = document.querySelector('#autoFrame').value == 'FromPrint' && autoFramePrint && autoFramePrint.frame == '2003';
+	var piece = mask == 'Rules' ? 'box' : mask == 'Frame' ? 'frame' : null;
+	var adjust = replicated && piece && (!style || style == 'regular') ? (eighthFrameColors[letter] || {})[piece] : null; //not colorshifted
+	if (adjust) {
+		frame.rgbAdjust = adjust;
 	}
 
 	return frame;
@@ -6068,7 +6086,15 @@ async function printedTextOf(print) {
 	//MTGJSON writes the dash as " – "; cards (and the ability word italics) use " — "
 	var dashes = text => text.replace(/ – /g, ' — ');
 	//MTGJSON writes the old tap symbol as "ocT" in printed texts: it becomes {T}, drawn with the symbol of the print's era
-	return {oracle_text: dashes(match.text).replace(/\bocT\b/g, '{T}'), type_line: match.type ? dashes(match.type) : print.type_line};
+	return {oracle_text: printedManaSymbols(dashes(match.text).replace(/\bocT\b/g, '{T}')), type_line: match.type ? dashes(match.type) : print.type_line};
+}
+//MTGJSON's printed texts keep Gatherer's ways of writing some symbols: Phyrexian and hybrid mana as "{(}u/p)}" (New Phyrexia,
+//Return to Ravnica, Phyrexia: All Will Be One...) or "{(w/u)}" and "{(g/w)(g/w)}" (Shadowmoor, Eventide, Guildpact), and several
+//symbols in one pair of braces, "{1U}", "{WB}", "{5GWU}" (Shards of Alara, Shadowmoor). They become one symbol per pair of braces
+function printedManaSymbols(text) {
+	return text.replace(/\{\(\}([0-9a-z])\/([a-z])\)\}/gi, (match, a, b) => `{${a.toUpperCase()}/${b.toUpperCase()}}`)
+		.replace(/\{((?:\([0-9a-z]\/[a-z]\))+)\}/gi, (match, inner) => inner.replace(/\(([0-9a-z])\/([a-z])\)/gi, (part, a, b) => `{${a.toUpperCase()}/${b.toUpperCase()}}`))
+		.replace(/\{(\d*)([WUBRGCXS]+)\}/g, (match, number, letters) => number.length + letters.length < 2 ? match : (number ? `{${number}}` : '') + letters.split('').map(letter => `{${letter}}`).join(''));
 }
 //Scryfall oracle text -> Card Conjurer text (italic reminder text and ability words, curly quotes, symbols)
 function formatImportedRulesText(oracleText, keywords) {
@@ -6244,6 +6270,9 @@ var watermarkAliases = {echoverse: 'fracture'}; //Reality Fracture's, named diff
 //colors that give, at the Watermark tab's 40% opacity, the shade printed on each text box (measured on six 2015 frame cards of each
 //color, most of them Reality Fracture's): a darker tone of the box's own color
 var watermarkFrameColors = {W: '#857d46', U: '#4a7a98', B: '#635e5c', R: '#9f4e36', G: '#54805e', M: '#8e7117', A: '#365562', L: '#5e5448'};
+//on the 2003 frame (8th Edition to Magic 2015) watermarks were printed much paler and greyer (39 cards with watermarks, Ravnica to
+//Return to Ravnica block: New Phyrexia's blue ones barely darken the box, ~25 points, with no blue in them)
+var eighthWatermarkColors = {W: '#b3a690', U: '#9a91a1', B: '#978583', R: '#c8895a', G: '#919982', M: '#897f41', A: '#747370', L: '#5e5448'};
 var printWatermarkRequest = 0;
 async function applyPrintWatermark(print) {
 	var request = ++printWatermarkRequest;
@@ -6281,14 +6310,15 @@ async function applyPrintWatermark(print) {
 		svg.remove();
 		var colors = (print.colors || []).filter(color => 'WUBRG'.includes(color));
 		var typeLine = print.english_type_line || print.type_line || '';
-		setColor(watermarkFrameColors[colors.length > 1 ? 'M' : colors.length == 1 ? colors[0] : typeLine.includes('Land') ? 'L' : 'A']);
+		var shades = print.frame == '2003' ? eighthWatermarkColors : watermarkFrameColors;
+		setColor(shades[colors.length > 1 ? 'M' : colors.length == 1 ? colors[0] : typeLine.includes('Land') ? 'L' : 'A']);
 		//two color cards (gold or hybrid): each half of the watermark in one of the colors, in the mana cost's order (Hypothesizzle,
 		//{3}{U}{R}: blue on the left, red on the right)
 		var costColors = [...new Set((print.mana_cost || '').toUpperCase().match(/[WUBRG]/g) || [])];
 		var pair = costColors.length == 2 ? costColors : colors.length == 2 ? colors : null;
 		if (pair) {
-			setColor(watermarkFrameColors[pair[0]]);
-			card.watermarkRight = watermarkFrameColors[pair[1]];
+			setColor(shades[pair[0]]);
+			card.watermarkRight = shades[pair[1]];
 			document.querySelector('#watermark-right').value = card.watermarkRight;
 		}
 		uploadWatermark(source, 'resetWatermark');
@@ -6476,7 +6506,8 @@ function placeEighthBottomLines(print) {
 	var wizardsCodes = wizards.defaultPlace.text.match(/^(\{[^}]*\})*/)[0];
 	//printPosition: the copyright line keeps its printed place instead of being pushed below the artist line's box
 	card.bottomInfo.top = Object.assign({}, top, {x: top.defaultPlace.x - 0.015, y: top.defaultPlace.y - 0.0055, printPosition: true, text: top.defaultPlace.text.replace('￮ ', '￮{right' + Math.round(card.width * 0.003) + '}')});
-	card.bottomInfo.wizards = Object.assign({}, wizards, {y: top.defaultPlace.y + top.height, text: wizardsCodes + '™ & © ' + owner + ' {elemidinfo-number}'});
+	//the copyright line starts 0.007 further left than the frame's default (0.088 on printed cards from Mirrodin to Theros)
+	card.bottomInfo.wizards = Object.assign({}, wizards, {x: wizards.defaultPlace.x - 0.007, y: top.defaultPlace.y + top.height, text: wizardsCodes + '™ & © ' + owner + ' {elemidinfo-number}'});
 }
 function placeRetroBottomLines(print) {
 	if (!card.bottomInfo || !card.bottomInfo.top || !card.bottomInfo.wizards || !['1993', '1997'].includes(print.frame)) {
