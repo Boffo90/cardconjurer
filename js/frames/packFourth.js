@@ -21,8 +21,9 @@ document.querySelector('#loadFrameVersion').onclick = async function() {
 	//sets card version
 	card.version = 'fourth';
 	card.showsFlavorBar = false;
-	//art bounds
-	card.artBounds = {x:0.1034, y:0.0886, width:0.794, height:0.4543};
+	//art bounds: every color's art window (they open from 0.0857 to 0.09 down, the land and black frames' the highest), so none shows
+	//a gap above or beside the art
+	card.artBounds = {x:0.102, y:0.0857, width:0.7967, height:0.4576};
 	autoFitArt();
 	//set symbol bounds
 	card.setSymbolBounds = {x:0.9, y:0.5758, width:0.12, height:0.0362, vertical:'center', horizontal: 'right'};

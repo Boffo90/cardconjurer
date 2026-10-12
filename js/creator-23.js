@@ -466,7 +466,7 @@ function drawFrames() {
 			}
 			var bounds = item.bounds || {};
 			var ogBounds = item.ogBounds || bounds;
-			var itemImage = stampWithScan(item) || adjustedFrameImage(item) || item.image; //scanned holo stamps (local_art/stamps), printed colors
+			var itemImage = stampWithScan(item) || dualLandBoxImage(item) || adjustedFrameImage(item) || item.image; //scanned holo stamps (local_art/stamps), dual land boxes, printed colors
 			frameX = Math.round(scaleX(bounds.x || 0));
 			frameY = Math.round(scaleY(bounds.y || 0));
 			frameWidth = Math.round(scaleWidth(bounds.width || 1));
@@ -2082,6 +2082,152 @@ var fourthFrameColors = {
 	M: {scale: [0.88, 0.956, 0.7], offset: [-26, -42, 9], region: fourthBox([0.851, 0.809, 0.909])},
 	A: {scale: [1.067, 1.026, 1.079], offset: [-27, -17, -20], region: fourthBox([0.923, 0.935, 0.928])}
 };
+//The dual lands of Alpha to Revised (Volcanic Island, Tundra...), from the ten printed in Revised: their text box is concentric
+//stripes of their two colors, framed by three thin lines (both measured on the scans). The stripes start with the first of the two
+//colors in the order red, white, blue, green, black (Volcanic Island: red outside), the lines with the first in red, blue, black,
+//green, white (Tundra: blue, white, blue); seven stripes 0.024 of the card's width, then the inner color in the middle
+var classicLandSets = ['lea', 'leb', '2ed', 'ced', 'cei', '3ed', 'fbb', 'sum'];
+var classicLandLines = {scale: [1, 1, 1], offset: [0, 0, 0], gold: {scale: [0, 0, 0], offset: [118, 92, 92]}, goldBelow: 110, goldAbove: 160};
+var dualBoxStripes = {W: [227, 214, 188], U: [181, 198, 195], B: [190, 192, 188], R: [212, 158, 147], G: [196, 197, 154]};
+var dualBoxLines = {W: [222, 220, 225], U: [72, 125, 165], B: [52, 54, 52], R: [190, 78, 62], G: [150, 165, 72]};
+//Revised's basic lands: a plain box of their color (the Swamp's dark gray) in a line of their color, with a thin dark line
+//inside it (two prints of each measured)
+var basicLandBoxes = {W: [232, 219, 194], U: [182, 193, 200], B: [86, 93, 93], R: [221, 169, 161], G: [190, 192, 147]};
+var basicLandLines = {W: [222, 222, 218], U: [80, 135, 178], B: [48, 51, 45], R: [206, 107, 93], G: [158, 177, 95]};
+var basicLandInnerLines = {W: [127, 120, 110], U: [65, 93, 115], B: [32, 29, 24], R: [113, 72, 60], G: [92, 95, 55]};
+//...and Alpha to Unlimited's deeper ones (eight prints of each)
+var earlyBasicLandBoxes = {W: [212, 192, 155], U: [144, 159, 164], B: [115, 118, 119], R: [206, 121, 117], G: [160, 166, 108]};
+var earlyLandSets = ['lea', 'leb', '2ed', 'ced', 'cei'];
+function classicLandColors(print) {
+	if (!print || print.frame != '1993' || !classicLandSets.includes((print.set || '').toLowerCase())) {
+		return null;
+	}
+	var subtypes = ((print.english_type_line || print.type_line || '').split(/ [—–-] /)[1] || '').split(' ');
+	var colors = subtypes.map(subtype => ({Plains: 'W', Island: 'U', Swamp: 'B', Mountain: 'R', Forest: 'G'})[subtype]).filter(color => color);
+	return colors.length == 2 || (colors.length == 1 && /\bBasic\b/.test(print.english_type_line || print.type_line || '')) ? colors : null;
+}
+function classicDualColors(print) {
+	var colors = classicLandColors(print);
+	return colors && colors.length == 2 ? colors : null;
+}
+//The striped text box drawn from the land frame's own text box (its paper texture), the rest of the image left transparent
+function dualLandBoxImage(frame) {
+	var image = frame.image;
+	if (!frame.dualLandBox || !image || !image.complete || !image.naturalWidth) {
+		return null;
+	}
+	var key = frame.dualLandBox + (frame.earlyLandBox ? ' early' : '');
+	if (image.dualBoxes && image.dualBoxes[key]) {
+		return image.dualBoxes[key];
+	}
+	var colors = frame.dualLandBox.split('');
+	var first = order => colors.slice().sort((a, b) => order.indexOf(a) - order.indexOf(b))[0];
+	//(a basic land's one color: a plain box)
+	var stripeOuter = first('RWUGB'), stripeInner = colors.find(color => color != stripeOuter) || stripeOuter;
+	var lineOuter = first('RUBGW'), lineInner = colors.find(color => color != lineOuter);
+	var stripes = colors.length == 2 ? dualBoxStripes : frame.earlyLandBox ? earlyBasicLandBoxes : basicLandBoxes;
+	//the lines around the box, from the outside in, by their width across the card: the dual lands' three (the second one of their
+	//other color), the basic lands' line of their color with a thin dark one inside
+	var boxLines = colors.length == 1 ? [[0.007, basicLandLines[lineOuter]], [0.0025, basicLandInnerLines[lineOuter]]] :
+		[[0.003, dualBoxLines[lineOuter]], [0.004, dualBoxLines[lineInner]], [0.003, dualBoxLines[lineOuter]]];
+	var width = image.naturalWidth, height = image.naturalHeight;
+	var canvas = document.createElement('canvas');
+	canvas.width = width;
+	canvas.height = height;
+	var context = canvas.getContext('2d');
+	context.drawImage(image, 0, 0);
+	//the land frame's own text box: 0.111 to 0.8945 across and 0.5955 to 0.8962 down with its gold line, its paper (0.125 to 0.877
+	//and 0.6095 to 0.8845, inside its lines) gives the new box its texture
+	var paper = context.getImageData(Math.round(0.125 * width), Math.round(0.6095 * height), Math.round(0.752 * width), Math.round(0.275 * height));
+	var paperBrightness = [];
+	for (var i = 0; i < paper.data.length; i += 4) {
+		paperBrightness.push((paper.data[i] + paper.data[i + 1] + paper.data[i + 2]) / 3);
+	}
+	//Revised's box: 0.114 to 0.887 across and 0.6045 to 0.9015 down (Volcanic Island), over the old one but for its top and sides,
+	//covered with the stone right next to them (the rest of the image left transparent)
+	var x0 = Math.round(0.114 * width), x1 = Math.round(0.887 * width), y0 = Math.round(0.6045 * height), y1 = Math.round(0.9015 * height);
+	var frameData = context.getImageData(0, 0, width, height), framePixels = frameData.data;
+	context.clearRect(0, 0, width, height);
+	var ox0 = Math.round(0.111 * width), ox1 = Math.round(0.8945 * width), oy0 = Math.round(0.5955 * height), oy1 = Math.round(0.8965 * height);
+	//each pixel of stone from 0.01 away (the stone's halftone dots repeat every 0.005: copied from there they line up), the top's
+	//from above it (from rows already copied once it's taller than that), the sides' from beside them
+	var shift = Math.round(0.01 * width);
+	var copyStone = (x, y, fromX, fromY) => {
+		for (var channel = 0; channel < 4; channel ++) {
+			framePixels[(y * width + x) * 4 + channel] = framePixels[(fromY * width + fromX) * 4 + channel];
+		}
+	};
+	for (var y = oy0; y < y0; y ++) {
+		for (var x = ox0; x < ox1; x ++) {
+			copyStone(x, y, x, y - shift);
+		}
+	}
+	for (var y = y0; y < oy1; y ++) {
+		for (var x = ox0; x < x0; x ++) {
+			copyStone(x, y, x - shift, y);
+		}
+		for (var x = x1; x < ox1; x ++) {
+			copyStone(x, y, x + shift, y);
+		}
+	}
+	context.putImageData(frameData, 0, 0, ox0, oy0, ox1 - ox0, oy1 - oy0);
+	var data = context.getImageData(x0, y0, x1 - x0, y1 - y0);
+	var pixels = data.data, boxWidth = x1 - x0, boxHeight = y1 - y0;
+	var linesWidth = boxLines.reduce((total, line) => total + Math.round(line[0] * width), 0), stripe = 0.024 * width;
+	var brightness = [], total = 0, count = 0, rowTotals = new Array(boxHeight).fill(0), columnTotals = new Array(boxWidth).fill(0);
+	var inside = (x, y) => Math.min(x, boxWidth - 1 - x, y, boxHeight - 1 - y) >= linesWidth;
+	for (var y = 0; y < boxHeight; y ++) {
+		for (var x = 0; x < boxWidth; x ++) {
+			//(the paper's a little smaller than the box: mirrored at its ends)
+			var paperX = x < paper.width ? x : 2 * paper.width - 2 - x, paperY = y < paper.height ? y : 2 * paper.height - 2 - y;
+			var value = paperBrightness[paperY * paper.width + paperX];
+			brightness.push(value);
+			if (inside(x, y)) {
+				total += value;
+				count ++;
+				rowTotals[y] += value;
+				columnTotals[x] += value;
+			}
+		}
+	}
+	//(the average of the paper under the box's inside only: the old box's darker gold line would make it lighter) and the grain
+	//alone, without the old box's shading (lighter at its top), each pixel against its own row's and column's averages
+	var meanBrightness = total / count, insideWidth = boxWidth - 2 * linesWidth, insideHeight = boxHeight - 2 * linesWidth;
+	for (var y = linesWidth; y < boxHeight - linesWidth; y ++) {
+		for (var x = linesWidth; x < boxWidth - linesWidth; x ++) {
+			brightness[y * boxWidth + x] += 2 * meanBrightness - rowTotals[y] / insideWidth - columnTotals[x] / insideHeight;
+		}
+	}
+	for (var y = 0; y < boxHeight; y ++) {
+		for (var x = 0; x < boxWidth; x ++) {
+			var index = (y * boxWidth + x) * 4;
+			var depth = Math.min(x, boxWidth - 1 - x, y, boxHeight - 1 - y);
+			var color = null, lineEnd = 0;
+			for (var line of boxLines) {
+				lineEnd += Math.round(line[0] * width);
+				if (!color && depth < lineEnd) {
+					color = line[1];
+				}
+			}
+			//the paper's texture: each pixel of the box as much lighter or darker than its average as on the frame (the lines plain,
+			//over the old box's own line)
+			var texture = 1;
+			if (!color) {
+				var band = Math.floor((depth - linesWidth) / stripe);
+				color = stripes[band < 7 && band % 2 == 0 ? stripeOuter : stripeInner];
+				texture = Math.min(1.15, Math.max(0.85, brightness[index / 4] / meanBrightness));
+			}
+			for (var channel = 0; channel < 3; channel ++) {
+				pixels[index + channel] = Math.min(255, color[channel] * texture);
+			}
+			pixels[index + 3] = 255;
+		}
+	}
+	context.putImageData(data, x0, y0);
+	image.dualBoxes = image.dualBoxes || {};
+	image.dualBoxes[key] = canvas;
+	return canvas;
+}
 //The original (1993) frame: one image per color, and a black or white border
 async function autoFourthFrame(colors, mana_cost, type_line, power) {
 	card.frames = [];
@@ -2103,6 +2249,14 @@ async function autoFourthFrame(colors, mana_cost, type_line, power) {
 		}
 		if (fourthFrameColors[frameLetter]) {
 			frames[1].rgbAdjust = fourthFrameColors[frameLetter];
+		}
+		//lands of Alpha to Revised: the lines around the art and the text box are mauve, not gold (4th Edition's are gold)
+		if (frameLetter == 'L' && classicLandSets.includes((autoFramePrint.set || '').toLowerCase())) {
+			frames[1].rgbAdjust = classicLandLines;
+		}
+		var landColors = classicLandColors(autoFramePrint);
+		if (landColors) {
+			frames.splice(1, 0, {name: (landColors.length == 2 ? 'Dual ' : 'Basic ') + 'Land Text Box', src: '/img/frames/old/fourth/l.png', masks: [], dualLandBox: landColors.join(''), earlyLandBox: earlyLandSets.includes(autoFramePrint.set.toLowerCase())});
 		}
 	}
 	card.frames = frames;
@@ -5182,7 +5336,9 @@ function artFromScryfall(scryfallResponse) {
 		// Find the art that matches the selected print
 		var index = artIllustrations.indexOf(illustrationID);
 		if (index < 0) {
-			// Couldn't find art
+			// Couldn't find art: cards with thousands of prints (basic lands) only bring Scryfall's first page of results, so the
+			// print's own art is added (the English print of the same set and number, which has the same illustration)
+			addPrintArt(scryfallCard[document.querySelector('#import-index').value]);
 			index = 0;
 		}
 
@@ -5191,6 +5347,29 @@ function artFromScryfall(scryfallResponse) {
 	}
 
 	changeArtIndex();
+}
+async function addPrintArt(print) {
+	if (!print || !print.set || !print.collector_number) {
+		return;
+	}
+	try {
+		var english = print.lang == 'en' && print.image_uris ? print : await (await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(print.set)}/${encodeURIComponent(print.collector_number)}/en`)).json();
+		var face = english.card_faces && !english.image_uris ? english.card_faces[print.face_index || 0] : english;
+		if (!face || !face.image_uris || print != scryfallCard[document.querySelector('#import-index').value]) {
+			return; //no art, or another card was imported meanwhile
+		}
+		var artCard = Object.assign({}, english, {image_uris: face.image_uris, artist: face.artist || english.artist, illustration_id: face.illustration_id || english.illustration_id});
+		scryfallArt.unshift(artCard);
+		var artIndex = document.querySelector('#art-index');
+		var option = document.createElement('option');
+		option.innerHTML = `${artCard.name} (${artCard.set.toUpperCase()} - ${artCard.artist})`;
+		artIndex.insertBefore(option, artIndex.firstChild);
+		Array.from(artIndex.options).forEach((item, index) => item.value = index);
+		artIndex.value = 0;
+		changeArtIndex();
+	} catch (error) {
+		//the first result's art stays
+	}
 }
 //Full illustrations you keep yourself: local_art/full/<set>/<number>.png (or .jpg/.webp; "<number>-back" for a back face).
 //Scryfall only has art cut to the classic art box, which ruins borderless and full art cards.
@@ -6087,7 +6266,12 @@ async function printedTextOf(print) {
 	//MTGJSON writes the dash as " – "; cards (and the ability word italics) use " — "
 	var dashes = text => text.replace(/ – /g, ' — ');
 	//MTGJSON writes the old tap symbol as "ocT" in printed texts: it becomes {T}, drawn with the symbol of the print's era
-	return {oracle_text: printedManaSymbols(dashes(match.text).replace(/\bocT\b/g, '{T}')), type_line: match.type ? dashes(match.type) : print.type_line};
+	var printedType = match.type ? dashes(match.type) : print.type_line;
+	//lands of Alpha to Revised print "Land" only (MTGJSON follows Gatherer's "Land — Island Mountain" for the dual lands)
+	if (classicLandSets.includes((print.set || '').toLowerCase()) && /^Land\b/.test(printedType)) {
+		printedType = 'Land';
+	}
+	return {oracle_text: printedManaSymbols(dashes(match.text).replace(/\bocT\b/g, '{T}')), type_line: printedType};
 }
 //MTGJSON's printed texts keep Gatherer's ways of writing some symbols: Phyrexian and hybrid mana as "{(}u/p)}" (New Phyrexia,
 //Return to Ravnica, Phyrexia: All Will Be One...) or "{(w/u)}" and "{(g/w)(g/w)}" (Shadowmoor, Eventide, Guildpact), and several
@@ -6427,7 +6611,13 @@ function placeRetroTextSizes(print) {
 	}
 	if (print.frame == '1993') {
 		Object.assign(card.text.rules || {}, {size: 0.0317, x: 0.15, width: 0.70, kerning: 0.0008, paragraphSpacing: 0, flavorGap: 0, smallTier: retroLongTextTier});
-		Object.assign(card.text.title || {}, {y: 0.036});
+		Object.assign(card.text.title || {}, {x: 0.0827, y: 0.036, color: 'white'});
+		//Alpha to Revised: the title light grey (192,193,190 on Revised scans), a little smaller and more to the left. Where it sits
+		//in the title bar: Revised's frame starts lower (its white border wider), so it's 0.047 down and 0.0757 across on the scans,
+		//0.012 and 0.011 less on this frame
+		if (classicLandSets.includes((print.set || '').toLowerCase())) {
+			Object.assign(card.text.title || {}, {x: 0.065, y: 0.035, size: 0.038, color: '#c0c1be'});
+		}
 		//the mana cost a little lower and more spread out than the frame's default (Necropotence: centers 0.0063 lower, 0.0038 apart)
 		Object.assign(card.text.mana || {}, {y: 0.0425, manaSpacing: 0.0019});
 	}
@@ -6585,7 +6775,22 @@ function centerRetroLandText(print) {
 	//lands centered: only text that is just a reminder in parentheses, like the dual lands' "({T}: Add {B} or {R}.)" (Evolving Wilds'
 	//one line of rules stays on the left)
 	var reminderOnly = /^\([^()]*\)$/.test(oracleText);
-	rules.align = oracleText != '' && (earlyCoreSet || (retroLand && reminderOnly)) ? 'center' : rules.defaultAlign;
+	//...but the dual lands of Alpha to Revised keep their long text on the left
+	rules.align = oracleText != '' && ((earlyCoreSet && !classicDualColors(print)) || (retroLand && reminderOnly)) ? 'center' : rules.defaultAlign;
+}
+//The lands' text as printed on Revised's, centered 0.73 down (above the box's middle). The dual lands' long text: the small font
+//of long texts on the original frame (the same as Ice Age's Necropotence: lines 0.028 apart, 0.010 x-height), from 0.144 across,
+//in six lines on Volcanic Island. The basic lands': "{T}: Add {R} to / your mana pool." in two short centered lines (0.039 tall,
+//0.045 apart), and Alpha to Unlimited's "Tap to add {U} to / your mana pool." bigger (0.047 tall, 0.052 apart) and 0.72 down
+function placeClassicLandText(print) {
+	var landColors = classicLandColors(print);
+	if (card.text.rules && landColors && landColors.length == 2) {
+		Object.assign(card.text.rules, {size: retroLongTextTier.size, lineSpacing: retroLongTextTier.lineSpacing, kerning: retroLongTextTier.kerning, x: 0.144, width: 0.70, y: 0.622, height: 0.22, smallTier: undefined});
+	} else if (card.text.rules && landColors && earlyLandSets.includes(print.set.toLowerCase())) {
+		Object.assign(card.text.rules, {size: 0.047, lineSpacing: 0.10, x: 0.25, width: 0.50, y: 0.6127, height: 0.22, smallTier: undefined});
+	} else if (card.text.rules && landColors) {
+		Object.assign(card.text.rules, {size: 0.039, lineSpacing: 0.145, x: 0.31, width: 0.38, y: 0.622, height: 0.22, smallTier: undefined});
+	}
 }
 //Fills the extra text boxes of special frame versions (second halves, flip sides, class levels, mutate...)
 function importSpecialTextBoxes(print, otherHalf, rulesText) {
@@ -6769,6 +6974,9 @@ async function changeCardIndex() {
 		placeBorderColorLines(cardToImport);
 	}
 	placePrintedRulesSpacing(replicatePrint ? cardToImport : {});
+	if (replicatePrint) {
+		placeClassicLandText(cardToImport); //after the spacing above, which would undo its line spacing
+	}
 	//text
 	var langFontCode = "";
 	if (cardToImport.lang == "ph") {langFontCode = "{fontphyrexian}"}
@@ -6794,7 +7002,14 @@ async function changeCardIndex() {
 
 	if (card.text.nickname) {card.text.nickname.text = cardToImport.flavor_name || '';}
 	if (card.text.mana) {card.text.mana.text = cardToImport.mana_cost || '';}
-	if (card.text.type) {card.text.type.text = langFontCode + (cardToImport.type_line || '');}
+	if (card.text.type) {
+		var importedType = cardToImport.type_line || '';
+		//every land of Alpha to Revised prints "Land" (basic lands too: "Basic Land — Plains" on Scryfall)
+		if (replicatePrint && (cardToImport.lang || 'en') == 'en' && classicLandSets.includes((cardToImport.set || '').toLowerCase()) && /^(Basic )?Land\b/.test(importedType)) {
+			importedType = 'Land';
+		}
+		card.text.type.text = langFontCode + importedType;
+	}
 
 	var rulesText = formatImportedRulesText(cardToImport.oracle_text, cardToImport.keywords);
 
