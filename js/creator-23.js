@@ -2136,22 +2136,41 @@ function dualLandBoxImage(frame) {
 	canvas.height = height;
 	var context = canvas.getContext('2d');
 	context.drawImage(image, 0, 0);
-	//the land frame's own text box (with its gold line), 0.1147 to 0.89 across and 0.5548 to 0.8933 down: its paper (from 0.01
-	//inside, past the gold line) gives the box its texture, then it's covered with the frame's stone (from below the box), since
-	//Revised's box sits lower
-	var ox0 = Math.round(0.112 * width), ox1 = Math.round(0.893 * width), oy0 = Math.round(0.552 * height), oy1 = Math.round(0.896 * height);
-	var paper = context.getImageData(Math.round(0.1247 * width), Math.round(0.5648 * height), Math.round(0.7553 * width), Math.round(0.3185 * height));
+	//the land frame's own text box: 0.111 to 0.8945 across and 0.5955 to 0.8962 down with its gold line, its paper (0.125 to 0.877
+	//and 0.6095 to 0.8845, inside its lines) gives the new box its texture
+	var paper = context.getImageData(Math.round(0.125 * width), Math.round(0.6095 * height), Math.round(0.752 * width), Math.round(0.275 * height));
 	var paperBrightness = [];
 	for (var i = 0; i < paper.data.length; i += 4) {
 		paperBrightness.push((paper.data[i] + paper.data[i + 1] + paper.data[i + 2]) / 3);
 	}
-	var stone = context.getImageData(ox0, Math.round(0.9 * height), ox1 - ox0, Math.round(0.062 * height));
-	context.clearRect(0, 0, width, height);
-	for (var stoneY = oy0; stoneY < oy1; stoneY += stone.height) {
-		context.putImageData(stone, ox0, stoneY, 0, 0, stone.width, Math.min(stone.height, oy1 - stoneY));
-	}
-	//Revised's box: 0.114 to 0.887 across and 0.6045 to 0.9015 down (Volcanic Island)
+	//Revised's box: 0.114 to 0.887 across and 0.6045 to 0.9015 down (Volcanic Island), over the old one but for its top and sides,
+	//covered with the stone right next to them (the rest of the image left transparent)
 	var x0 = Math.round(0.114 * width), x1 = Math.round(0.887 * width), y0 = Math.round(0.6045 * height), y1 = Math.round(0.9015 * height);
+	var frameData = context.getImageData(0, 0, width, height), framePixels = frameData.data;
+	context.clearRect(0, 0, width, height);
+	var ox0 = Math.round(0.111 * width), ox1 = Math.round(0.8945 * width), oy0 = Math.round(0.5955 * height), oy1 = Math.round(0.8965 * height);
+	//each pixel of stone from 0.01 away (the stone's halftone dots repeat every 0.005: copied from there they line up), the top's
+	//from above it (from rows already copied once it's taller than that), the sides' from beside them
+	var shift = Math.round(0.01 * width);
+	var copyStone = (x, y, fromX, fromY) => {
+		for (var channel = 0; channel < 4; channel ++) {
+			framePixels[(y * width + x) * 4 + channel] = framePixels[(fromY * width + fromX) * 4 + channel];
+		}
+	};
+	for (var y = oy0; y < y0; y ++) {
+		for (var x = ox0; x < ox1; x ++) {
+			copyStone(x, y, x, y - shift);
+		}
+	}
+	for (var y = y0; y < oy1; y ++) {
+		for (var x = ox0; x < x0; x ++) {
+			copyStone(x, y, x - shift, y);
+		}
+		for (var x = x1; x < ox1; x ++) {
+			copyStone(x, y, x + shift, y);
+		}
+	}
+	context.putImageData(frameData, 0, 0, ox0, oy0, ox1 - ox0, oy1 - oy0);
 	var data = context.getImageData(x0, y0, x1 - x0, y1 - y0);
 	var pixels = data.data, boxWidth = x1 - x0, boxHeight = y1 - y0;
 	var linesWidth = boxLines.reduce((total, line) => total + Math.round(line[0] * width), 0), stripe = 0.024 * width;
@@ -2159,7 +2178,9 @@ function dualLandBoxImage(frame) {
 	var inside = (x, y) => Math.min(x, boxWidth - 1 - x, y, boxHeight - 1 - y) >= linesWidth;
 	for (var y = 0; y < boxHeight; y ++) {
 		for (var x = 0; x < boxWidth; x ++) {
-			var value = paperBrightness[Math.min(paper.height - 1, y) * paper.width + Math.min(paper.width - 1, x)];
+			//(the paper's a little smaller than the box: mirrored at its ends)
+			var paperX = x < paper.width ? x : 2 * paper.width - 2 - x, paperY = y < paper.height ? y : 2 * paper.height - 2 - y;
+			var value = paperBrightness[paperY * paper.width + paperX];
 			brightness.push(value);
 			if (inside(x, y)) {
 				total += value;
@@ -6591,9 +6612,11 @@ function placeRetroTextSizes(print) {
 	if (print.frame == '1993') {
 		Object.assign(card.text.rules || {}, {size: 0.0317, x: 0.15, width: 0.70, kerning: 0.0008, paragraphSpacing: 0, flavorGap: 0, smallTier: retroLongTextTier});
 		Object.assign(card.text.title || {}, {x: 0.0827, y: 0.036, color: 'white'});
-		//Alpha to Revised: the title light grey (192,193,190 on Revised scans), a little smaller, lower and more to the left
+		//Alpha to Revised: the title light grey (192,193,190 on Revised scans), a little smaller and more to the left. Where it sits
+		//in the title bar: Revised's frame starts lower (its white border wider), so it's 0.047 down and 0.0757 across on the scans,
+		//0.012 and 0.011 less on this frame
 		if (classicLandSets.includes((print.set || '').toLowerCase())) {
-			Object.assign(card.text.title || {}, {x: 0.0757, y: 0.047, size: 0.038, color: '#c0c1be'});
+			Object.assign(card.text.title || {}, {x: 0.065, y: 0.035, size: 0.038, color: '#c0c1be'});
 		}
 		//the mana cost a little lower and more spread out than the frame's default (Necropotence: centers 0.0063 lower, 0.0038 apart)
 		Object.assign(card.text.mana || {}, {y: 0.0425, manaSpacing: 0.0019});
