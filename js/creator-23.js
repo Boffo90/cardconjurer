@@ -6091,6 +6091,13 @@ async function printedTextOf(print) {
 //MTGJSON's printed texts keep Gatherer's ways of writing some symbols: Phyrexian and hybrid mana as "{(}u/p)}" (New Phyrexia,
 //Return to Ravnica, Phyrexia: All Will Be One...) or "{(w/u)}" and "{(g/w)(g/w)}" (Shadowmoor, Eventide, Guildpact), and several
 //symbols in one pair of braces, "{1U}", "{WB}", "{5GWU}" (Shards of Alara, Shadowmoor). They become one symbol per pair of braces
+//Texts saved before printedManaSymbols existed (saved cards, "Remember for this print") kept "{(}u/p)}" with the reminder's
+//italics cut inside it: "{i}({(}u/p){/i}} can be paid with either {U} or 2 life.)" becomes "{i}({U/P} can be paid ... life.){/i}"
+//(only that form: "{WB}" written by hand is Card Conjurer's hybrid symbol, not two symbols)
+function repairSavedSymbols(text) {
+	return text.replace(/\{\(\}([0-9a-z])\/([a-z])\)\{\/i\}\}([^\n]*?\))/gi, (match, a, b, rest) => `{${a.toUpperCase()}/${b.toUpperCase()}}${rest}{/i}`)
+		.replace(/\{\(\}([0-9a-z])\/([a-z])\)\}/gi, (match, a, b) => `{${a.toUpperCase()}/${b.toUpperCase()}}`);
+}
 function printedManaSymbols(text) {
 	return text.replace(/\{\(\}([0-9a-z])\/([a-z])\)\}/gi, (match, a, b) => `{${a.toUpperCase()}/${b.toUpperCase()}}`)
 		.replace(/\{((?:\([0-9a-z]\/[a-z]\))+)\}/gi, (match, inner) => inner.replace(/\(([0-9a-z])\/([a-z])\)/gi, (part, a, b) => `{${a.toUpperCase()}/${b.toUpperCase()}}`))
@@ -6235,7 +6242,7 @@ function applyLearnedPrintedText(print, replicatePrint) {
 	if (learned) {
 		if (learned.title != null && card.text.title) { card.text.title.text = learned.title; }
 		if (learned.type != null && card.text.type) { card.text.type.text = learned.type; }
-		if (learned.rules != null && card.text.rules) { card.text.rules.text = learned.rules; }
+		if (learned.rules != null && card.text.rules) { card.text.rules.text = repairSavedSymbols(learned.rules); }
 	} else if (replicatePrint && print.printed_name_source == 'translation') {
 		notify(`Auto frame: Scryfall and MTGJSON don't have this card's name in ${(print.lang || '').toUpperCase()}: it was translated automatically (Google)${print.printed_text_source == 'translation' ? ', and so was its text' : ''}, so it may not be the printed name. Correct it in the Text tab if needed and press "Remember for this print".`, 10);
 	} else if (replicatePrint && print.missing_printed_text) {
@@ -7131,6 +7138,9 @@ async function loadCard(selectedCardKey) {
 		}
 		document.querySelector('#info-year').value = card.infoYear || date.getFullYear();
 		artistEdited(card.infoArtist);
+		Object.values(card.text || {}).forEach(textObject => {
+			textObject.text = repairSavedSymbols(textObject.text || '');
+		});
 		document.querySelector('#text-editor').value = card.text[Object.keys(card.text)[selectedTextIndex]].text;
 		document.querySelector('#text-editor-font-size').value = card.text[Object.keys(card.text)[selectedTextIndex]].fontSize || 0;
 		loadTextOptions(card.text);
