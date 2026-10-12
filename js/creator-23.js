@@ -5268,6 +5268,15 @@ function uploadArt(imageSource, otherParams) {
 			autoFitArt();
 			art.onload = artEdited;
 		};
+	} else if (otherParams == 'fitCard') {
+		//an illustration of the whole card (made from the card's image): over all of it, wherever the frame's art box is
+		art.onload = function() {
+			var artBounds = card.artBounds;
+			card.artBounds = {x: 0, y: 0, width: 1, height: 1};
+			autoFitArt();
+			card.artBounds = artBounds;
+			art.onload = artEdited;
+		};
 	}
 }
 function artEdited() {
@@ -5393,20 +5402,88 @@ async function localFullArtSource(print) {
 	}
 	return localFullArtCache.get(base);
 }
-async function uploadPrintArt(artCrop) {
+async function uploadPrintArt(artCrop, cardImage) {
 	var print = autoFramePrint;
 	var local = await localFullArtSource(print);
 	uploadArt(local || artCrop, 'autoFit');
 	if (!local && print && (print.border_color == 'borderless' || print.full_art)) {
-		notify(`Auto frame: Scryfall only has this card's art cut to the old art box. For a clean rebuild, put the full illustration at local_art/full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png (or .jpg).`, 10);
+		var aiArt = null;
+		try {
+			aiArt = await aiFullArt(print, cardImage);
+		} catch (error) {
+			notify(`Auto frame: the full illustration couldn't be made on this PC (${error.message}).`, 10);
+		}
+		if (aiArt && print == autoFramePrint) {
+			uploadArt(aiArt, 'fitCard');
+		} else if (!aiArt) {
+			notify(`Auto frame: Scryfall only has this card's art cut to the old art box. For a clean rebuild, put the full illustration at local_art/full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png (or .jpg), or set up the AI helper (ai_art/setup.py) to make it from the card's image.`, 10);
+		}
 	}
+}
+//Full illustrations made on this PC by the AI helper (ai_art/server.py, which the launcher starts): the whole illustration of a
+//borderless or full art card taken from its card image, with what this frame and its text cover painted out (LaMa) and 4 times
+//bigger (Real-ESRGAN). Kept in local_art/ai_full/<set>/<number>.png, so each card's made once.
+var aiFullArtServer = 'http://localhost:8081';
+async function aiFullArt(print, cardImage) {
+	var path = `/local_art/ai_full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png`;
+	try {
+		if ((await fetch(path, {method: 'HEAD'})).ok) {
+			return path;
+		}
+	} catch (error) {}
+	cardImage = cardImage || (print.image_uris && print.image_uris.png);
+	if (!cardImage) {
+		return null;
+	}
+	try {
+		if (!(await fetch(aiFullArtServer + '/status', {signal: AbortSignal.timeout(1500)})).ok) {
+			return null;
+		}
+	} catch (error) {
+		return null; //the helper isn't running
+	}
+	notify("Auto frame: making the full illustration on this PC (the card's text painted out, 4 times bigger), about half a minute.", 10);
+	var cover = await aiFullArtCover();
+	if (print != autoFramePrint) {
+		return null; //another card was imported meanwhile
+	}
+	var response = await fetch(aiFullArtServer + '/full-art', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({set: print.set, number: print.collector_number, back: print.face_index == 1, image: cardImage, cover: cover.image, rects: cover.rects})});
+	var result = await response.json();
+	if (!response.ok) {
+		throw new Error(result.error);
+	}
+	return result.path;
+}
+//What the frame and the text cover, white on black at the card's size (Scryfall's card images: 745 by 1040), once the frame's
+//images have loaded; and the text boxes with text in them, in case their text isn't drawn yet
+async function aiFullArtCover() {
+	for (var wait = 0; wait < 100 && !card.frames.every(frame => frame.image && frame.image.complete); wait ++) {
+		await new Promise(resolve => setTimeout(resolve, 150));
+	}
+	drawFrames();
+	var canvas = document.createElement('canvas');
+	canvas.width = 745;
+	canvas.height = 1040;
+	var context = canvas.getContext('2d');
+	for (var layer of [frameCanvas, textCanvas, bottomInfoCanvas]) {
+		context.drawImage(layer, scaleX(0), scaleY(0), scaleWidth(1), scaleHeight(1), 0, 0, canvas.width, canvas.height);
+	}
+	var data = context.getImageData(0, 0, canvas.width, canvas.height);
+	for (var i = 0; i < data.data.length; i += 4) {
+		var covered = data.data[i + 3] > 40 ? 255 : 0;
+		data.data[i] = data.data[i + 1] = data.data[i + 2] = covered;
+		data.data[i + 3] = 255;
+	}
+	context.putImageData(data, 0, 0);
+	var rects = Object.values(card.text).filter(text => text.text && [text.x, text.y, text.width, text.height].every(value => typeof value == 'number')).map(text => [text.x, text.y, text.width, text.height]);
+	return {image: canvas.toDataURL('image/png'), rects: rects};
 }
 function changeArtIndex() {
 	const artIndexValue = document.querySelector('#art-index').value;
 	if (artIndexValue != 0 || artIndexValue == '0') {
 		const scryfallCardForArt = scryfallArt[artIndexValue];
 		if (document.querySelector('#autoFrame').value == 'FromPrint' && autoFramePrint && scryfallCardForArt.illustration_id == autoFramePrint.illustration_id) {
-			uploadPrintArt(scryfallCardForArt.image_uris.art_crop); //your full illustration, when you have it
+			uploadPrintArt(scryfallCardForArt.image_uris.art_crop, scryfallCardForArt.image_uris.png); //your full illustration, when you have it
 		} else {
 			uploadArt(scryfallCardForArt.image_uris.art_crop, 'autoFit');
 		}
