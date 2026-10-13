@@ -2,8 +2,8 @@
 Full illustrations for borderless and full art cards, made on this PC.
 
 Scryfall only has these cards' art cut to the old art box. Their full card image has the whole illustration, with the card's
-text printed over it: its halftone dots are blurred away, LaMa paints out the text (the parts Card Conjurer draws its own frame
-and text over), then Real-ESRGAN makes it 4 times bigger, so it's drawn at the card's size without zooming in.
+text printed over it: its halftone dots are taken out, LaMa paints out the text (the parts Card Conjurer draws its own frame
+and text over), then two Real-ESRGAN models make it 4 times bigger, so it's drawn at the card's size without zooming in.
 
 Runs with the Python of ai_art/.venv (setup.py makes it); the launcher starts it. Card Conjurer asks it on
 http://localhost:8081, and the images are kept in local_art/ai_full/<set>/<number>.png (served by the launcher).
@@ -33,7 +33,8 @@ CARD_WIDTH = 2010  # Card Conjurer's card width: the illustration is saved that 
 onnxruntime.set_default_logger_severity(3)
 # LaMa on the processor (DirectML can't run its Fourier transforms, a second or two for each part), Real-ESRGAN on the GPU
 lama = onnxruntime.InferenceSession(os.path.join(MODELS, "lama.onnx"), providers=["CPUExecutionProvider"])
-esrgan = onnxruntime.InferenceSession(os.path.join(MODELS, "real_esrgan_x4plus.onnx"), providers=["DmlExecutionProvider", "CPUExecutionProvider"])
+upscalers = [onnxruntime.InferenceSession(os.path.join(MODELS, name), providers=["DmlExecutionProvider", "CPUExecutionProvider"])
+             for name in ("real_esrgan_general_x4v3.onnx", "real_esrgan_x4plus.onnx")]
 gpu_lock = threading.Lock()  # one card at a time on the GPU
 
 """
@@ -83,12 +84,47 @@ def mask_parts(mask):
 
 
 """
-UPSCALING (Real-ESRGAN x4plus: 128x128 tiles)
+HALFTONE (the print's dots, which Real-ESRGAN would make into a grid)
+"""
+
+
+def box_blur(values, size):
+    padding = size // 2
+    sums = np.pad(np.pad(values, padding, mode="edge").cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+    return (sums[size:, size:] - sums[:-size, size:] - sums[size:, :-size] + sums[:-size, :-size]) / (size * size)
+
+
+def descreen(image):
+    """The halftone's dots are sharp peaks in the picture's frequencies, past the picture's own detail (0.10 cycles a pixel): each
+    one is brought down to the level around it, so the rest of the detail stays (blurring the dots away took it with them)."""
+    pixels = image.astype(np.float32)
+    height, width = pixels.shape[:2]
+    radius = np.sqrt(np.fft.fftfreq(height)[:, None] ** 2 + np.fft.fftfreq(width)[None, :] ** 2)
+    for channel in range(3):
+        frequencies = np.fft.fft2(pixels[..., channel])
+        magnitude = np.abs(frequencies)
+        level = np.log1p(magnitude)
+        around = np.fft.ifftshift(box_blur(np.fft.fftshift(level), 21))
+        peaks = ((level - around) > 0.4) & (radius > 0.10)
+        peaks = np.fft.ifftshift(box_blur(np.fft.fftshift(peaks.astype(np.float32)), 5)) > 0
+        frequencies[peaks] *= np.expm1(around[peaks]) / np.maximum(magnitude[peaks], 1e-6)
+        pixels[..., channel] = np.real(np.fft.ifft2(frequencies))
+    return np.clip(pixels, 0, 255).astype(np.uint8)
+
+
+"""
+UPSCALING (Real-ESRGAN: 128x128 tiles)
 """
 
 
 def upscale(image):
-    """image: HxWx3 uint8 -> 4 times bigger, in overlapping tiles blended together."""
+    """image: HxWx3 uint8 -> 4 times bigger: half Real-ESRGAN general x4v3 (it keeps the brushwork, but makes up grain on smooth
+    or compressed scans) and half x4plus (clean edges, but it smooths the brushwork away and oversharpens)."""
+    return np.mean([upscale_with(image, upscaler) for upscaler in upscalers], axis=0).round().astype(np.uint8)
+
+
+def upscale_with(image, upscaler):
+    """In overlapping tiles blended together."""
     tile, overlap, scale = 128, 16, 4
     height, width = image.shape[:2]
     padded = np.pad(image, ((0, max(0, tile - height)), (0, max(0, tile - width)), (0, 0)), mode="reflect")
@@ -104,11 +140,11 @@ def upscale(image):
     for y in ys:
         for x in xs:
             tile_input = padded[y:y + tile, x:x + tile].astype(np.float32).transpose(2, 0, 1)[None] / 255
-            tile_output = esrgan.run(None, {"image": tile_input})[0][0].transpose(1, 2, 0)
+            tile_output = upscaler.run(None, {"image": tile_input})[0][0].transpose(1, 2, 0)
             output[y * scale:(y + tile) * scale, x * scale:(x + tile) * scale] += tile_output * tile_weight
             weights[y * scale:(y + tile) * scale, x * scale:(x + tile) * scale] += tile_weight
     output = output / weights
-    return (np.clip(output[:height * scale, :width * scale], 0, 1) * 255).round().astype(np.uint8)
+    return np.clip(output[:height * scale, :width * scale], 0, 1) * 255
 
 
 """
@@ -134,8 +170,8 @@ def full_art(image_url, cover=None, rects=()):
         x0, y0 = max(0, int(x * width)), max(0, int(y * height))
         x1, y1 = min(width, int(np.ceil((x + rect_width) * width))), min(height, int(np.ceil((y + rect_height) * height)))
         mask[y0:y1, x0:x1] = True
-    # the print's halftone dots blurred away first (Real-ESRGAN would make them into a grid; it sharpens the edges back)
-    image = np.asarray(Image.fromarray(pixels[..., :3]).filter(ImageFilter.GaussianBlur(1.5)))
+    # (with a very light blur after: what's left of the dots would come out as grain, and more blur than this smooths the brushwork)
+    image = np.asarray(Image.fromarray(descreen(pixels[..., :3])).filter(ImageFilter.GaussianBlur(0.5)))
     image = inpaint(image.copy(), mask)
     big = Image.fromarray(upscale(image))
     return big.resize((CARD_WIDTH, round(CARD_WIDTH * height / width)), Image.LANCZOS)
@@ -186,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/status":
-            self.answer(200, {"ready": True, "upscaler": esrgan.get_providers()[0]})
+            self.answer(200, {"ready": True, "upscaler": upscalers[0].get_providers()[0]})
         else:
             self.answer(404, {"error": "not found"})
 
@@ -227,5 +263,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--parent":
         watch_parent(int(sys.argv[2]))
     server = ThreadingHTTPServer(("localhost", PORT), Handler)
-    print("AI full art on http://localhost:%s (upscaling on %s)" % (PORT, esrgan.get_providers()[0]))
+    print("AI full art on http://localhost:%s (upscaling on %s)" % (PORT, upscalers[0].get_providers()[0]))
     server.serve_forever()

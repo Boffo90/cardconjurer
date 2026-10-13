@@ -3,7 +3,7 @@ Sets up the AI helper that makes the full illustrations of borderless and full a
 - a Python environment of its own in ai_art/.venv, with ONNX Runtime (DirectML: any DirectX 12 graphics card, no CUDA needed)
 - the two models in ai_art/models, checked against their known contents:
   - LaMa (painting out the text), from OpenCV's models on Hugging Face (Apache 2.0)
-  - Real-ESRGAN x4plus (4 times bigger), as exported by Qualcomm AI Hub (BSD 3-Clause)
+  - Real-ESRGAN general x4v3 and x4plus (4 times bigger, half each), as exported by Qualcomm AI Hub (BSD 3-Clause)
 
 Run it with Python 3.10 or newer: python ai_art/setup.py. The launcher starts the helper from then on.
 """
@@ -22,8 +22,11 @@ VENV_PYTHON = os.path.join(VENV, "Scripts", "python.exe") if os.name == "nt" els
 
 LAMA = ("https://huggingface.co/opencv/inpainting_lama/resolve/main/inpainting_lama_2025jan.onnx",
         "7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2")
-ESRGAN = ("https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/real_esrgan_x4plus/releases/v0.64.0/real_esrgan_x4plus-onnx-float.zip",
-          "05aa31323c6a7e831493171cac970e398697709cae7e7ae8e0760e6da4d64ca4")
+UPSCALERS = {
+    "real_esrgan_general_x4v3": "fc094329b24a00c936ebc1cc4c51bc59633e7dc36f4a553344342171cbd3c7cf",
+    "real_esrgan_x4plus": "05aa31323c6a7e831493171cac970e398697709cae7e7ae8e0760e6da4d64ca4",
+}
+UPSCALER_URL = "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/{0}/releases/v0.64.0/{0}-onnx-float.zip"
 
 
 def download(url, sha256, path):
@@ -49,14 +52,15 @@ def main():
     os.makedirs(MODELS, exist_ok=True)
     if not os.path.exists(os.path.join(MODELS, "lama.onnx")):
         download(*LAMA, os.path.join(MODELS, "lama.onnx"))
-    if not os.path.exists(os.path.join(MODELS, "real_esrgan_x4plus.onnx")):
-        archive = os.path.join(MODELS, "real_esrgan_x4plus.zip")
-        download(*ESRGAN, archive)
-        with zipfile.ZipFile(archive) as zip_file:
-            for name in ("real_esrgan_x4plus.onnx", "real_esrgan_x4plus.data"):
-                with open(os.path.join(MODELS, name), "wb") as file:
-                    file.write(zip_file.read("real_esrgan_x4plus-onnx-float/" + name))
-        os.remove(archive)
+    for model, sha256 in UPSCALERS.items():
+        if not os.path.exists(os.path.join(MODELS, model + ".onnx")):
+            archive = os.path.join(MODELS, model + ".zip")
+            download(UPSCALER_URL.format(model), sha256, archive)
+            with zipfile.ZipFile(archive) as zip_file:
+                for name in (model + ".onnx", model + ".data"):
+                    with open(os.path.join(MODELS, name), "wb") as file:
+                        file.write(zip_file.read(model + "-onnx-float/" + name))
+            os.remove(archive)
     print("Ready. The launcher starts the AI helper with Card Conjurer.")
 
 
