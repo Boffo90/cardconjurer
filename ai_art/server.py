@@ -117,10 +117,14 @@ UPSCALING (Real-ESRGAN: 128x128 tiles)
 """
 
 
-def upscale(image):
-    """image: HxWx3 uint8 -> 4 times bigger: half Real-ESRGAN general x4v3 (it keeps the brushwork, but makes up grain on smooth
-    or compressed scans) and half x4plus (clean edges, but it smooths the brushwork away and oversharpens)."""
-    return np.mean([upscale_with(image, upscaler) for upscaler in upscalers], axis=0).round().astype(np.uint8)
+def upscale(image, general_share):
+    """image: HxWx3 uint8 -> 4 times bigger: Real-ESRGAN general x4v3 (it keeps the brushwork, but makes up grain on smooth or
+    compressed scans) and x4plus (clean edges, but it smooths the brushwork away and oversharpens), general_share of the first."""
+    output = 0
+    for upscaler, share in zip(upscalers, (general_share, 1 - general_share)):
+        if share > 0:
+            output = output + upscale_with(image, upscaler) * share
+    return np.clip(output, 0, 255).round().astype(np.uint8)
 
 
 def upscale_with(image, upscaler):
@@ -152,10 +156,20 @@ THE CARDS
 """
 
 
-def full_art(image_url, cover=None, rects=()):
+# How much detail is kept: the blur after the halftone's taken out (what's left of the dots would come out as grain, more blur
+# smooths the brushwork) and how much of the upscaling is the general model's
+DETAIL = {
+    "soft": {"blur": 1.1, "general": 1},  # smooth, for scans with little detail (x4plus makes up hair-like strokes when blurred)
+    "balanced": {"blur": 0.5, "general": 0.5},
+    "detailed": {"blur": 0.3, "general": 1},  # all the brushwork (and grain made up on smooth or compressed scans)
+}
+
+
+def full_art(image_url, cover=None, rects=(), detail="balanced"):
     """The card's full illustration: what Card Conjurer's frame and text cover (cover: an image of the card's size, white where
     they do, and/or rects: x, y, width, height as fractions of the card) and its transparent round corners painted out, 4 times
     bigger, then saved at the card's width."""
+    settings = DETAIL[detail]
     with urllib.request.urlopen(urllib.request.Request(image_url, headers={"User-Agent": "CardConjurer/AI full art"}), timeout=30) as response:
         card = Image.open(BytesIO(response.read())).convert("RGBA")
     pixels = np.asarray(card)
@@ -170,17 +184,18 @@ def full_art(image_url, cover=None, rects=()):
         x0, y0 = max(0, int(x * width)), max(0, int(y * height))
         x1, y1 = min(width, int(np.ceil((x + rect_width) * width))), min(height, int(np.ceil((y + rect_height) * height)))
         mask[y0:y1, x0:x1] = True
-    # (with a very light blur after: what's left of the dots would come out as grain, and more blur than this smooths the brushwork)
-    image = np.asarray(Image.fromarray(descreen(pixels[..., :3])).filter(ImageFilter.GaussianBlur(0.5)))
+    image = np.asarray(Image.fromarray(descreen(pixels[..., :3])).filter(ImageFilter.GaussianBlur(settings["blur"])))
     image = inpaint(image.copy(), mask)
-    big = Image.fromarray(upscale(image))
+    big = Image.fromarray(upscale(image, settings["general"]))
     return big.resize((CARD_WIDTH, round(CARD_WIDTH * height / width)), Image.LANCZOS)
 
 
-def output_path(set_code, number, back):
-    if not re.fullmatch(r"[a-z0-9]{2,8}", set_code) or not re.fullmatch(r"[A-Za-z0-9★†\-]{1,12}", number):
+def output_path(set_code, number, back, detail):
+    """local_art/ai_full/<set>/<number>[-back][-soft|-detailed].png (balanced, the usual one, without a suffix)"""
+    if not re.fullmatch(r"[a-z0-9]{2,8}", set_code) or not re.fullmatch(r"[A-Za-z0-9★†\-]{1,12}", number) or detail not in DETAIL:
         raise ValueError("not a card")
-    return os.path.join(OUTPUT, set_code, number + ("-back" if back else "") + ".png")
+    suffix = ("-back" if back else "") + ("" if detail == "balanced" else "-" + detail)
+    return os.path.join(OUTPUT, set_code, number + suffix + ".png")
 
 
 def watch_parent(pid):
@@ -235,14 +250,15 @@ class Handler(BaseHTTPRequestHandler):
             # only Scryfall's card images
             if not re.match(r"https://cards\.scryfall\.io/", image_url):
                 raise ValueError("only Scryfall card images")
-            path = output_path(str(request["set"]).lower(), str(request["number"]), bool(request.get("back")))
+            detail = str(request.get("detail", "balanced"))
+            path = output_path(str(request["set"]).lower(), str(request["number"]), bool(request.get("back")), detail)
             rects = [[float(value) for value in rect][:4] for rect in request.get("rects", [])]
             cover = None
             if request.get("cover"):
                 cover = Image.open(BytesIO(base64.b64decode(request["cover"].split(",", 1)[1])))
             if not os.path.exists(path) or request.get("redo"):
                 with gpu_lock:
-                    image = full_art(image_url, cover, rects)
+                    image = full_art(image_url, cover, rects, detail)
                     os.makedirs(os.path.dirname(path), exist_ok=True)
                     image.save(path + ".part.png")
                     os.replace(path + ".part.png", path)
@@ -256,9 +272,9 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "test":
-        # python server.py test <scryfall png url> <output.png> [x,y,w,h ...]
-        rects = [[float(value) for value in rect.split(",")] for rect in sys.argv[4:]]
-        full_art(sys.argv[2], rects=rects).save(sys.argv[3])
+        # python server.py test <scryfall png url> <output.png> <soft|balanced|detailed> [x,y,w,h ...]
+        rects = [[float(value) for value in rect.split(",")] for rect in sys.argv[5:]]
+        full_art(sys.argv[2], rects=rects, detail=sys.argv[4]).save(sys.argv[3])
         sys.exit()
     if len(sys.argv) > 2 and sys.argv[1] == "--parent":
         watch_parent(int(sys.argv[2]))
