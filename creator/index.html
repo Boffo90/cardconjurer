@@ -322,6 +322,17 @@
 							</div>
 						</div>
 						<div class='readable-background padding margin-bottom'>
+							<h5 class='margin-bottom padding input-description'>Borderless and full art cards: their full illustration is made on this PC by the AI helper (it starts with the launcher once set up: python ai_art/setup.py). How much of the scan's detail it keeps:</h5>
+							<div class='input-grid'>
+								<select class='input' id='ai-art-detail' onchange='aiArtDetailChanged();'>
+									<option value='soft'>Soft (smooth)</option>
+									<option value='balanced' selected>Balanced</option>
+									<option value='detailed'>Detailed (all the brushwork)</option>
+								</select>
+								<button class='input' onclick='remakeAiFullArt();'>Make it again</button>
+							</div>
+						</div>
+						<div class='readable-background padding margin-bottom'>
 							<h5 class='margin-bottom padding input-description'>Position/scale your art (X, Y, Scale, Rotation)<br>Art is now visually adjustable! Click and drag anywhere on the card to move your art around. Hold shift while doing so to scale, or control to rotate.</h5>
 							<div class='input-grid margin-bottom'>
 								<input id='art-x' type='number' class='input' oninput='artEdited();' value=0>

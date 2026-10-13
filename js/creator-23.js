@@ -5406,32 +5406,48 @@ async function uploadPrintArt(artCrop, cardImage) {
 	var print = autoFramePrint;
 	var local = await localFullArtSource(print);
 	uploadArt(local || artCrop, 'autoFit');
-	if (!local && print && (print.border_color == 'borderless' || print.full_art)) {
-		var aiArt = null;
-		try {
-			aiArt = await aiFullArt(print, cardImage);
-		} catch (error) {
-			notify(`Auto frame: the full illustration couldn't be made on this PC (${error.message}).`, 10);
-		}
-		if (aiArt && print == autoFramePrint) {
-			uploadArt(aiArt, 'fitCard');
-		} else if (!aiArt) {
-			notify(`Auto frame: Scryfall only has this card's art cut to the old art box. For a clean rebuild, put the full illustration at local_art/full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png (or .jpg), or set up the AI helper (ai_art/setup.py) to make it from the card's image.`, 10);
-		}
+	aiFullArtCardImage = cardImage;
+	if (!local && aiFullArtFits(print) && !(await useAiFullArt(print, false))) {
+		notify(`Auto frame: Scryfall only has this card's art cut to the old art box. For a clean rebuild, put the full illustration at local_art/full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png (or .jpg), or set up the AI helper (ai_art/setup.py) to make it from the card's image.`, 10);
 	}
+}
+function aiFullArtFits(print) {
+	return print && (print.border_color == 'borderless' || print.full_art);
+}
+//Puts in the full illustration made by the AI helper (made first if it isn't yet, or made again): false when the helper isn't
+//running
+var aiFullArtCardImage = null; //the art's print's card image, in case the imported print has none
+async function useAiFullArt(print, redo) {
+	var aiArt = null;
+	try {
+		aiArt = await aiFullArt(print, aiFullArtCardImage, redo);
+	} catch (error) {
+		notify(`Auto frame: the full illustration couldn't be made on this PC (${error.message}).`, 10);
+		return true;
+	}
+	if (aiArt && print == autoFramePrint) {
+		uploadArt(aiArt + (redo ? '?' + Date.now() : ''), 'fitCard'); //(made again: not the browser's copy of the last one)
+	}
+	return aiArt != null;
 }
 //Full illustrations made on this PC by the AI helper (ai_art/server.py, which the launcher starts): the whole illustration of a
 //borderless or full art card taken from its card image, with what this frame and its text cover painted out (LaMa) and 4 times
-//bigger (Real-ESRGAN). Kept in local_art/ai_full/<set>/<number>.png, so each card's made once.
+//bigger (Real-ESRGAN), with as much detail as the Art tab says (soft, balanced or detailed). Kept in
+//local_art/ai_full/<set>/<number>[-soft|-detailed].png, so each card's made once at each level.
 var aiFullArtServer = 'http://localhost:8081';
-async function aiFullArt(print, cardImage) {
-	var path = `/local_art/ai_full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png`;
+function aiArtDetail() {
+	return document.querySelector('#ai-art-detail').value || 'balanced';
+}
+async function aiFullArt(print, cardImage, redo) {
+	var detail = aiArtDetail();
+	var path = `/local_art/ai_full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}${detail == 'balanced' ? '' : '-' + detail}.png`;
 	try {
-		if ((await fetch(path, {method: 'HEAD'})).ok) {
+		if (!redo && (await fetch(path, {method: 'HEAD'})).ok) {
 			return path;
 		}
 	} catch (error) {}
-	cardImage = cardImage || (print.image_uris && print.image_uris.png);
+	//(the imported print's own image first: another print of the same illustration can have it cut or placed differently)
+	cardImage = (print.image_uris && print.image_uris.png) || cardImage;
 	if (!cardImage) {
 		return null;
 	}
@@ -5447,12 +5463,38 @@ async function aiFullArt(print, cardImage) {
 	if (print != autoFramePrint) {
 		return null; //another card was imported meanwhile
 	}
-	var response = await fetch(aiFullArtServer + '/full-art', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({set: print.set, number: print.collector_number, back: print.face_index == 1, image: cardImage, cover: cover.image, rects: cover.rects})});
+	var response = await fetch(aiFullArtServer + '/full-art', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({set: print.set, number: print.collector_number, back: print.face_index == 1, image: cardImage, cover: cover.image, rects: cover.rects, detail: detail, redo: redo})});
 	var result = await response.json();
 	if (!response.ok) {
 		throw new Error(result.error);
 	}
 	return result.path;
+}
+//The Art tab's detail level: the imported card's full illustration at that level (made if it isn't yet), or made again
+async function aiFullArtFor() {
+	var print = autoFramePrint;
+	if (document.querySelector('#autoFrame').value != 'FromPrint' || !aiFullArtFits(print)) {
+		notify('The full illustration is made for borderless and full art cards imported with the auto frame "From print".', 6);
+		return null;
+	}
+	if (await localFullArtSource(print)) {
+		notify('This card uses your own full illustration (local_art/full).', 6);
+		return null;
+	}
+	return print;
+}
+async function aiArtDetailChanged() {
+	localStorage.setItem('aiArtDetail', aiArtDetail());
+	var print = autoFramePrint && aiFullArtFits(autoFramePrint) ? await aiFullArtFor() : null;
+	if (print && !(await useAiFullArt(print, false))) {
+		notify("The AI helper isn't running: it starts with the launcher once it's set up (python ai_art/setup.py).", 8);
+	}
+}
+async function remakeAiFullArt() {
+	var print = await aiFullArtFor();
+	if (print && !(await useAiFullArt(print, true))) {
+		notify("The AI helper isn't running: it starts with the launcher once it's set up (python ai_art/setup.py).", 8);
+	}
 }
 //What the frame and the text cover, white on black at the card's size (Scryfall's card images: 745 by 1040), once the frame's
 //images have loaded; and the text boxes with text in them, in case their text isn't drawn yet
@@ -8343,6 +8385,7 @@ function makeZip(files) {
 // INITIALIZATION
 
 // auto load frame version (user defaults)
+document.querySelector('#ai-art-detail').value = localStorage.getItem('aiArtDetail') || 'balanced';
 if (!localStorage.getItem('autoLoadFrameVersion')) {
 	localStorage.setItem('autoLoadFrameVersion', document.querySelector('#autoLoadFrameVersion').checked);
 }
