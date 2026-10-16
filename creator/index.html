@@ -331,6 +331,10 @@
 								</select>
 								<button class='input' onclick='remakeAiFullArt();'>Make it again</button>
 							</div>
+							<label class='checkbox-container input margin-top'>What comes out of the frame on the printed card (a character's hair over the title...) over the frame
+								<input id='art-pop-out' type='checkbox' checked onchange='localStorage.setItem("artPopOut", this.checked); drawCard();'>
+								<span class='checkmark'></span>
+							</label>
 						</div>
 						<div class='readable-background padding margin-bottom'>
 							<h5 class='margin-bottom padding input-description'>Position/scale your art (X, Y, Scale, Rotation)<br>Art is now visually adjustable! Click and drag anywhere on the card to move your art around. Hold shift while doing so to scale, or control to rotate.</h5>
