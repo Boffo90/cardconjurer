@@ -57,6 +57,8 @@ const corner = new Image(); corner.crossOrigin = 'anonymous'; corner.src = fixUr
 const serial = new Image(); serial.crossOrigin = 'anonymous'; serial.src = fixUri('/img/frames/serial.png');
 //art
 art = new Image(); art.crossOrigin = 'anonymous'; art.src = blank.src;
+//what comes out of the frame on the printed card (made with the AI helper's full illustration): drawn over the frame like the art
+popOut = new Image(); popOut.crossOrigin = 'anonymous'; popOut.src = blank.src; popOut.onload = () => drawCard();
 art.onerror = function() {if (!this.src.includes('/img/blank.png')) {this.src = fixUri('/img/blank.png');}}
 art.onload = artEdited;
 //set symbol
@@ -5261,8 +5263,10 @@ async function addTextbox(textboxType) {
 	}
 }
 //ART TAB
-function uploadArt(imageSource, otherParams) {
+function uploadArt(imageSource, otherParams, popOutSource) {
 	art.src = imageSource;
+	card.popOutSource = popOutSource || null;
+	popOut.src = popOutSource || blank.src;
 	if (otherParams && otherParams == 'autoFit') {
 		art.onload = function() {
 			autoFitArt();
@@ -5411,8 +5415,9 @@ async function uploadPrintArt(artCrop, cardImage) {
 		notify(`Auto frame: Scryfall only has this card's art cut to the old art box. For a clean rebuild, put the full illustration at local_art/full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}.png (or .jpg), or set up the AI helper (ai_art/setup.py) to make it from the card's image.`, 10);
 	}
 }
+//Borderless and full art cards, and planeswalkers (their illustration goes on under the ability boxes, past what Scryfall's art has)
 function aiFullArtFits(print) {
-	return print && (print.border_color == 'borderless' || print.full_art);
+	return print && (print.border_color == 'borderless' || print.full_art || (print.english_type_line || print.type_line || '').includes('Planeswalker'));
 }
 //Puts in the full illustration made by the AI helper (made first if it isn't yet, or made again): false when the helper isn't
 //running
@@ -5426,7 +5431,8 @@ async function useAiFullArt(print, redo) {
 		return true;
 	}
 	if (aiArt && print == autoFramePrint) {
-		uploadArt(aiArt + (redo ? '?' + Date.now() : ''), 'fitCard'); //(made again: not the browser's copy of the last one)
+		var again = redo ? '?' + Date.now() : ''; //(made again: not the browser's copy of the last one)
+		uploadArt(aiArt.path + again, 'fitCard', aiArt.popout ? aiArt.popout + again : null);
 	}
 	return aiArt != null;
 }
@@ -5441,16 +5447,12 @@ function aiArtDetail() {
 async function aiFullArt(print, cardImage, redo) {
 	var detail = aiArtDetail();
 	var path = `/local_art/ai_full/${print.set.toLowerCase()}/${print.collector_number}${print.face_index == 1 ? '-back' : ''}${detail == 'balanced' ? '' : '-' + detail}.png`;
+	var popout = path.replace(/\.png$/, '-popout.png');
 	try {
 		if (!redo && (await fetch(path, {method: 'HEAD'})).ok) {
-			return path;
+			return {path: path, popout: (await fetch(popout, {method: 'HEAD'})).ok ? popout : null};
 		}
 	} catch (error) {}
-	//(the imported print's own image first: another print of the same illustration can have it cut or placed differently)
-	cardImage = (print.image_uris && print.image_uris.png) || cardImage;
-	if (!cardImage) {
-		return null;
-	}
 	try {
 		if (!(await fetch(aiFullArtServer + '/status', {signal: AbortSignal.timeout(1500)})).ok) {
 			return null;
@@ -5458,23 +5460,27 @@ async function aiFullArt(print, cardImage, redo) {
 	} catch (error) {
 		return null; //the helper isn't running
 	}
+	cardImage = (await aiFullArtSource(print)) || cardImage;
+	if (!cardImage) {
+		return null;
+	}
 	notify("Auto frame: making the full illustration on this PC (the card's text painted out, 4 times bigger), about half a minute.", 10);
-	var cover = await aiFullArtCover();
+	var frame = await aiFullArtFrame();
 	if (print != autoFramePrint) {
 		return null; //another card was imported meanwhile
 	}
-	var response = await fetch(aiFullArtServer + '/full-art', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({set: print.set, number: print.collector_number, back: print.face_index == 1, image: cardImage, cover: cover.image, rects: cover.rects, detail: detail, redo: redo})});
+	var response = await fetch(aiFullArtServer + '/full-art', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({set: print.set, number: print.collector_number, back: print.face_index == 1, image: cardImage, frame: frame.image, rects: frame.rects, detail: detail, redo: redo})});
 	var result = await response.json();
 	if (!response.ok) {
 		throw new Error(result.error);
 	}
-	return result.path;
+	return result;
 }
 //The Art tab's detail level: the imported card's full illustration at that level (made if it isn't yet), or made again
 async function aiFullArtFor() {
 	var print = autoFramePrint;
 	if (document.querySelector('#autoFrame').value != 'FromPrint' || !aiFullArtFits(print)) {
-		notify('The full illustration is made for borderless and full art cards imported with the auto frame "From print".', 6);
+		notify('The full illustration is made for borderless and full art cards and planeswalkers imported with the auto frame "From print".', 6);
 		return null;
 	}
 	if (await localFullArtSource(print)) {
@@ -5496,25 +5502,50 @@ async function remakeAiFullArt() {
 		notify("The AI helper isn't running: it starts with the launcher once it's set up (python ai_art/setup.py).", 8);
 	}
 }
-//What the frame and the text cover, white on black at the card's size (Scryfall's card images: 745 by 1040), once the frame's
-//images have loaded; and the text boxes with text in them, in case their text isn't drawn yet
-async function aiFullArtCover() {
+//The card image the illustration's taken from: the English print's of the same set and number when this one's in another
+//language (Scryfall's scans of other languages are often small and blurry), the same card otherwise
+async function aiFullArtSource(print) {
+	if (print.lang && print.lang != 'en') {
+		try {
+			var english = await (await fetch(`https://api.scryfall.com/cards/${encodeURIComponent(print.set)}/${encodeURIComponent(print.collector_number)}/en`)).json();
+			var face = english.card_faces && !english.image_uris ? english.card_faces[print.face_index || 0] : english;
+			if (face && face.image_uris && face.image_uris.png) {
+				return face.image_uris.png;
+			}
+		} catch (error) {}
+	}
+	return print.image_uris && print.image_uris.png;
+}
+//The frame as it's drawn over the art, with how see-through each part of it is, at the card's size (Scryfall's card images: 745
+//by 1040), once its images have loaded: the planeswalkers' ability boxes (under the frame) and loyalty (over it) too, and the
+//collector's line (as if it hid what's under it); and the text boxes with text in them, where printed text is looked for
+async function aiFullArtFrame() {
 	for (var wait = 0; wait < 100 && !card.frames.every(frame => frame.image && frame.image.complete); wait ++) {
 		await new Promise(resolve => setTimeout(resolve, 150));
 	}
 	drawFrames();
+	if (card.version.toLowerCase().includes('planeswalker') && typeof planeswalkerEdited == 'function') {
+		planeswalkerEdited();
+	}
 	var canvas = document.createElement('canvas');
 	canvas.width = 745;
 	canvas.height = 1040;
 	var context = canvas.getContext('2d');
-	for (var layer of [frameCanvas, textCanvas, bottomInfoCanvas]) {
+	var layers = [typeof planeswalkerPreFrameCanvas != 'undefined' && card.version.toLowerCase().includes('planeswalker') ? planeswalkerPreFrameCanvas : null, frameCanvas,
+		typeof planeswalkerPostFrameCanvas != 'undefined' && card.version.toLowerCase().includes('planeswalker') ? planeswalkerPostFrameCanvas : null];
+	for (var layer of layers.filter(layer => layer)) {
 		context.drawImage(layer, scaleX(0), scaleY(0), scaleWidth(1), scaleHeight(1), 0, 0, canvas.width, canvas.height);
 	}
+	var line = document.createElement('canvas');
+	line.width = canvas.width;
+	line.height = canvas.height;
+	line.getContext('2d').drawImage(bottomInfoCanvas, scaleX(0), scaleY(0), scaleWidth(1), scaleHeight(1), 0, 0, canvas.width, canvas.height);
 	var data = context.getImageData(0, 0, canvas.width, canvas.height);
-	for (var i = 0; i < data.data.length; i += 4) {
-		var covered = data.data[i + 3] > 40 ? 255 : 0;
-		data.data[i] = data.data[i + 1] = data.data[i + 2] = covered;
-		data.data[i + 3] = 255;
+	var lineAlpha = line.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+	for (var i = 3; i < data.data.length; i += 4) {
+		if (lineAlpha[i] > 40) {
+			data.data[i] = 255;
+		}
 	}
 	context.putImageData(data, 0, 0);
 	var rects = Object.values(card.text).filter(text => text.text && [text.x, text.y, text.width, text.height].every(value => typeof value == 'number')).map(text => [text.x, text.y, text.width, text.height]);
@@ -6135,6 +6166,17 @@ function drawCard() {
 	} else if (card.version.toLowerCase().includes('qrcode') && typeof qrCodeCanvas !== "undefined") {
 		cardContext.drawImage(qrCodeCanvas, 0, 0, cardCanvas.width, cardCanvas.height);
 	} // REMOVE/DELETE PLANESWALKERCANVAS AFTER A FEW WEEKS
+	// what comes out of the frame, placed like the art
+	if (card.popOutSource && document.querySelector('#art-pop-out').checked && popOut.complete && popOut.naturalWidth) {
+		cardContext.save();
+		cardContext.translate(scaleX(card.artX), scaleY(card.artY));
+		cardContext.rotate(Math.PI / 180 * (card.artRotate || 0));
+		if (document.querySelector('#grayscale-art').checked) {
+			cardContext.filter = 'grayscale(1)';
+		}
+		cardContext.drawImage(popOut, 0, 0, popOut.width * card.artZoom, popOut.height * card.artZoom);
+		cardContext.restore();
+	}
 	// guidelines
 	if (document.querySelector('#show-guidelines').checked) {
 		cardContext.drawImage(guidelinesCanvas, scaleX(card.marginX) / 2, scaleY(card.marginY) / 2, cardCanvas.width, cardCanvas.height);
@@ -7483,7 +7525,7 @@ async function loadCard(selectedCardKey) {
 		document.querySelector('#art-y').value = scaleY(card.artY) - scaleHeight(card.marginY);
 		document.querySelector('#art-zoom').value = card.artZoom * 100;
 		document.querySelector('#art-rotate').value = card.artRotate || 0;
-		uploadArt(card.artSource);
+		uploadArt(card.artSource, '', card.popOutSource);
 		document.querySelector('#setSymbol-x').value = scaleX(card.setSymbolX) - scaleWidth(card.marginX);
 		document.querySelector('#setSymbol-y').value = scaleY(card.setSymbolY) - scaleHeight(card.marginY);
 		document.querySelector('#setSymbol-zoom').value = card.setSymbolZoom * 100;
@@ -8386,6 +8428,7 @@ function makeZip(files) {
 
 // auto load frame version (user defaults)
 document.querySelector('#ai-art-detail').value = localStorage.getItem('aiArtDetail') || 'balanced';
+document.querySelector('#art-pop-out').checked = localStorage.getItem('artPopOut') != 'false';
 if (!localStorage.getItem('autoLoadFrameVersion')) {
 	localStorage.setItem('autoLoadFrameVersion', document.querySelector('#autoLoadFrameVersion').checked);
 }
