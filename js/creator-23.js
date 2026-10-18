@@ -7910,7 +7910,7 @@ async function languageTextOf(print) {
 	if (face) {
 		return {text: face.printed_text, source: 'printing'};
 	}
-	var translated = await machineTranslate(print.english_oracle_text, print.lang, print.english_name, print.name);
+	var translated = await machineTranslate(print.english_oracle_text, print.lang, print.english_name, print.name, true);
 	return translated ? {text: translated, source: 'translation'} : null;
 }
 //Before Magic 2010 (July 2009) spells were "played", not "cast", and permanents came "into play", not "onto the battlefield": a
@@ -7959,16 +7959,17 @@ async function printedNameCapitalization(print) {
 }
 var machineTranslations = {};
 //Google Translate (the free endpoint the translate widgets use), with mana symbols and the card's name protected, and the Magic
-//terms it gets wrong put back as printed
-async function machineTranslate(text, lang, englishName, printedName) {
+//terms it gets wrong put back as printed. rules: rules text (in Spanish, its keywords are put in as printed)
+async function machineTranslate(text, lang, englishName, printedName, rules) {
 	if (!text || !lang || lang == 'en') {
 		return null;
 	}
-	var cacheKey = lang + '|' + text;
+	var cacheKey = lang + '|' + (rules ? 'rules|' : '') + text;
 	if (!(cacheKey in machineTranslations)) {
 		machineTranslations[cacheKey] = (async () => {
+			var keywords = lang == 'es' && rules ? keepSpanishKeywords(text) : null;
 			var symbols = [];
-			var protectedText = text.replace(/\{[^}]+\}/g, symbol => { symbols.push(symbol); return '[' + (symbols.length - 1) + ']'; });
+			var protectedText = (keywords ? keywords.text : text).replace(/\{[^}]+\}/g, symbol => { symbols.push(symbol); return '[' + (symbols.length - 1) + ']'; });
 			if (englishName) {
 				protectedText = protectedText.split(englishName).join('[N]');
 			}
@@ -7984,6 +7985,9 @@ async function machineTranslate(text, lang, englishName, printedName) {
 				}
 				var result = (await response.json())[0].map(part => part[0]).join('');
 				result = result.replace(/\[\s*N\s*\]/gi, printedName || englishName).replace(/\[\s*(\d+)\s*\]/g, (code, index) => symbols[index] || code);
+				if (keywords) {
+					result = putBackSpanishKeywords(result, keywords.kept);
+				}
 				return lang == 'es' ? fixSpanishMagicTerms(result) : result;
 			} catch (error) {
 				return null;
@@ -7996,9 +8000,67 @@ async function machineTranslate(text, lang, englishName, printedName) {
 	}
 	return translation;
 }
-//Words a general translator gets wrong in Magic's Spanish
+var spanishKeywords = {"affinity": ["Afinidad por", null], "afflict": ["Afligir", null], "afterlife": ["Ultratumba", null], "aftermath": ["Secuela", null], "amplify": ["Amplificar", null], "annihilator": ["Aniquilador", "aniquilador"], "ascend": ["Ascender", null], "awaken": ["Despertar", null], "backup": ["Respaldar", null], "bargain": ["Negociar", null], "basic landcycling": ["Ciclo de tierras básicas", null], "battle cry": ["Grito de batalla", null], "bestow": ["Concesión", null], "blitz": ["Irrupción", null], "bloodthirst": ["Sed de sangre", null], "boast": ["Alardear", null], "buyback": ["Recuperar", null], "cascade": ["Cascada", "cascada"], "casualty": ["Victimizar", "victimizar"], "changeling": ["Cambiaformas", "cambiaformas"], "choose a background": ["Elige un Trasfondo", null], "cipher": ["Cifrar", null], "cleave": ["Recortar", null], "commander ninjutsu": ["Ninjutsu de comandante", null], "companion": ["Compañero", null], "compleated": ["Perfeccionado", null], "conspire": ["Conspirar", "conspirar"], "convoke": ["Convocar", "convocar"], "crew": ["Tripular", "tripular"], "cumulative upkeep": ["Mantenimiento acumulativo", null], "cycling": ["Ciclo", "ciclo"], "dash": ["Rapidez", null], "daybound": ["Diurno", null], "deathtouch": ["Toque mortal", "toque mortal"], "decayed": ["Descomposición", null], "defender": ["Defensor", "defensor"], "delve": ["Excavar", "excavar"], "demonstrate": ["Demostrar", null], "desertwalk": ["Cruza desiertos", null], "dethrone": ["Destronar", null], "devoid": ["Vacío", null], "devour": ["Devorar", null], "disguise": ["Disfrazarse", null], "disturb": ["Perturbar", null], "double strike": ["Daña dos veces", "dañar dos veces"], "dredge": ["Dragar", null], "echo": ["Eco", null], "embalm": ["Embalsamar", null], "emerge": ["Emerger", null], "enchant": ["Encantar", null], "encore": ["Replicar", "replicar"], "enlist": ["Reclutar", null], "entwine": ["Entrelazar", null], "epic": ["Épico", null], "equip": ["Equipar", "equipar"], "escalate": ["Expandir", null], "escape": ["Escapatoria", "escapatoria"], "eternalize": ["Eternizar", null], "evoke": ["Evocar", null], "evolve": ["Evolucionar", null], "exalted": ["Exaltado", "exaltado"], "exhaust": ["Agotar", null], "exploit": ["Aprovechar", null], "extort": ["Extorsionar", "extorsionar"], "fabricate": ["Fabricar", null], "fear": ["Inspirar temor", "inspirar temor"], "firebending": ["Controla el fuego", "controlar el fuego"], "first strike": ["Daña primero", "dañar primero"], "flanking": ["Flanquea", "flanquear"], "flash": ["Destello", "destello"], "flashback": ["Retrospectiva", "retrospectiva"], "flying": ["Vuela", "volar"], "forecast": ["Presagiar", null], "forestcycling": ["Ciclo de bosque", null], "forestwalk": ["Cruza bosques", "cruzar bosques"], "foretell": ["Profetizar", "profetizar"], "fortify": ["Fortificar", null], "freerunning": ["Parkour", "parkour"], "fuse": ["Fusionar", null], "graft": ["Injertar", null], "gravestorm": ["Tormenta sepulcral", null], "halflingcycling": ["Ciclo de Mediano", null], "harmonize": ["Armonizar", null], "haste": ["Prisa", "prisa"], "haunt": ["Acechar", null], "hexproof": ["Antimaleficio", "antimaleficio"], "hideaway": ["Esconder", null], "horsemanship": ["Caballería", "caballería"], "impending": ["Inminente", null], "improvise": ["Improvisar", "improvisar"], "increment": ["Incrementar", null], "indestructible": ["Indestructible", "indestructible"], "infect": ["Infectar", "infectar"], "intimidate": ["Intimidar", "intimidar"], "islandcycling": ["Ciclo de isla", null], "islandwalk": ["Cruza islas", "cruzar islas"], "job select": ["Elegir un trabajo", null], "jump-start": ["Recargar", "recargar"], "kicker": ["Estímulo", null], "legendary landwalk": ["Cruza tierras legendarias", null], "level up": ["Subir de nivel", null], "lifelink": ["Vínculo vital", "vínculo vital"], "living weapon": ["Arma viviente", null], "madness": ["Demencia", null], "max speed": ["Velocidad máxima", null], "mayhem": ["Altercado", null], "megamorph": ["Megametamorfosis", null], "melee": ["Reyerta", "reyerta"], "menace": ["Amenaza", "amenaza"], "miracle": ["Milagro", "milagro"], "mobilize": ["Movilizar", null], "morph": ["Metamorfosis", null], "mountaincycling": ["Ciclo de montaña", null], "mountainwalk": ["Cruza montañas", "cruzar montañas"], "multikicker": ["Multiestímulo", null], "mutate": ["Mutación", "mutación"], "myriad": ["Miríada", "miríada"], "nightbound": ["Nocturno", null], "nonbasic landwalk": ["Cruza tierras no básicas", "cruzar tierras no básicas"], "offspring": ["Cría", null], "outlast": ["Supervivencia", "supervivencia"], "overload": ["Sobrecarga", null], "paradigm": ["Paradigma", null], "partner": ["Camarada", null], "partner with": ["Camarada de", null], "persist": ["Persistir", "persistir"], "plainscycling": ["Ciclo de llanura", null], "plainswalk": ["Cruza llanuras", null], "provoke": ["Provocar", null], "prowess": ["Destreza", "destreza"], "prowl": ["Rondar", null], "rampage": ["Ímpetu", null], "ravenous": ["Voracidad", null], "reach": ["Alcance", "alcance"], "read ahead": ["Adelanto", null], "rebound": ["Rebote", "rebote"], "reconfigure": ["Reconfigurar", null], "recover": ["Recobrar", null], "reinforce": ["Reforzar", null], "renown": ["Prestigio", null], "replicate": ["Reproducir", "reproducir"], "retrace": ["Desandar", "desandar"], "riot": ["Insurgencia", "insurgencia"], "ripple": ["Ondear", null], "saddle": ["Ensillar", null], "scavenge": ["Carroñar", null], "shadow": ["Se desvanece", "desvanecerse"], "shroud": ["Velo", "velo"], "skulk": ["Escurridizo", "escurridizo"], "slivercycling": ["Ciclo de Fragmentado", null], "sneak": ["Infiltración", null], "solved": ["Resuelto", null], "soulbond": ["Unir almas", null], "soulshift": ["Migración de almas", null], "spectacle": ["Espectáculo", null], "split second": ["Fracción de segundo", "fracción de segundo"], "spree": ["Arrebato", null], "squad": ["Escuadra", null], "storied": ["Historiado", null], "storm": ["Tormenta", "tormenta"], "sunburst": ["Estallido solar", null], "surge": ["Impulso", null], "suspend": ["Suspender", "suspender"], "swampcycling": ["Ciclo de pantano", null], "swampwalk": ["Cruza pantanos", "cruzar pantanos"], "teamwork": ["Colaboración", null], "tiered": ["Gradual", null], "toxic": ["Tóxico", "tóxico"], "training": ["Entrenamiento", null], "trample": ["Arrolla", "arrollar"], "transfigure": ["Transfigurar", null], "transmute": ["Transmutar", null], "tribute": ["Tributo", null], "umbra armor": ["Armadura tótem", null], "undaunted": ["Audacia", null], "undying": ["Resiliencia", "resiliencia"], "unearth": ["Desenterrar", "desenterrar"], "unleash": ["Desatar", null], "vanishing": ["Desmaterializarse", null], "vigilance": ["Vigilancia", "vigilancia"], "ward": ["Rebatir", "rebatir"], "web-slinging": ["Balanceo", null], "wither": ["Debilitar", "debilitar"], "wizardcycling": ["Ciclo de hechicero", null]};
+var spanishKeywordActions = {"scry": ["Adivina", "adivinar"], "surveil": ["Escruta", "escrutar"], "mill": ["Muele", "moler"], "investigate": ["Investiga", "investigar"], "proliferate": ["Prolifera", "proliferar"], "populate": ["Repuebla", "repoblar"], "discover": ["Descubre", "descubrir"], "incubate": ["Incuba", "incubar"], "bolster": ["Fortalece", "fortalecer"], "support": ["Apoya", "apoyar"]};
+var spanishColors = {white: 'blanco', blue: 'azul', black: 'negro', red: 'rojo', green: 'verde'};
+//(the keywords given to creatures in sentences: "gains flying", "creatures with trample"... the others are mostly a card's own,
+//and some are also plain words in rules text: "equip abilities", "cycling"...)
+var spanishSentenceKeywords = ['flying', 'first strike', 'double strike', 'deathtouch', 'lifelink', 'haste', 'vigilance', 'reach', 'menace',
+	'hexproof', 'indestructible', 'trample', 'defender', 'shroud', 'fear', 'intimidate', 'flash', 'ward', 'infect', 'wither', 'prowess',
+	'forestwalk', 'islandwalk', 'mountainwalk', 'swampwalk', 'plainswalk', 'horsemanship', 'shadow', 'changeling', 'skulk', 'myriad', 'riot',
+	'persist', 'undying', 'exalted', 'cascade', 'convoke', 'decayed'];
+//Rules text ready for Google, its keywords kept out as they're printed on Spanish cards (Scryfall's Spanish cards: each keyword alone
+//on its line, and in "gains ..." sentences): lines of keywords ("Flying, trample" is "Vuela, arrolla.") as [L…], keywords in
+//sentences ("have trample": "tienen la habilidad de arrollar") as [K…], keyword actions ("scry 2": "adivina 2", "may scry 2":
+//"puedes adivinar 2") as [A…]
+function keepSpanishKeywords(text) {
+	var kept = [];
+	var keep = (letter, spanish) => { kept.push(spanish); return `[${letter}${kept.length - 1}]`; };
+	var escape = words => words.sort((a, b) => b.length - a.length).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+	var colors = Object.keys(spanishColors).join('|');
+	var oneKeyword = new RegExp(`^(${escape(Object.keys(spanishKeywords))}|protection from (?:${colors}))((?:\\s+(?:(?:\\{[^}]+\\})+|\\d+|X))?)$`, 'i');
+	var spanishOf = name => name.startsWith('protection from ') ? 'Protección contra ' + spanishColors[name.slice('protection from '.length)] : spanishKeywords[name][0];
+	text = text.split('\n').map(line => {
+		var reminder = (line.match(/\s*\([^()]*\)\s*$/) || [''])[0];
+		var printed = line.slice(0, line.length - reminder.length).split(/,\s*/).map(part => {
+			var match = part.trim().match(oneKeyword);
+			return match ? spanishOf(match[1].toLowerCase()) + match[2] : null;
+		});
+		if (!printed.every(part => part)) {
+			return line;
+		}
+		return keep('L', printed.map((part, index) => index == 0 ? part : part[0].toLowerCase() + part.slice(1)).join(', ') + '.') + reminder;
+	}).join('\n');
+	text = text.replace(new RegExp(`\\bprotection from (${colors})\\b`, 'gi'), (words, color) => keep('K', 'protección contra ' + spanishColors[color.toLowerCase()]))
+		.replace(new RegExp(`\\b(${escape(spanishSentenceKeywords.filter(name => spanishKeywords[name] && spanishKeywords[name][1]))})\\b(?! abilit)`, 'gi'), name => keep('K', 'la habilidad de ' + spanishKeywords[name.toLowerCase()][1]))
+		.replace(new RegExp(`\\b(may |to )?(${escape(Object.keys(spanishKeywordActions))})(?= (\\d+|X)\\b|[.,]|$)`, 'gim'), (words, before, action) => (before || '') + keep('A', spanishKeywordActions[action.toLowerCase()][before ? 1 : 0]));
+	return {text: text, kept: kept};
+}
+//...and put back in the translation: capitalized at a sentence's start, and abilities in a row as one ("la habilidad de volar y la
+//habilidad de arrollar" is printed "las habilidades de volar y arrollar")
+function putBackSpanishKeywords(text, kept) {
+	text = text.replace(/\[\s*K\s*(\d+)\s*\]((?:\s*,\s*\[\s*K\s*\d+\s*\])*)\s+(y|e|o|u)\s+\[\s*K\s*(\d+)\s*\]/gi, (row, first, middle, joining, last) => {
+		var indexes = [first, ...(middle.match(/\d+/g) || []), last].map(Number);
+		var abilities = indexes.map(index => kept[index]);
+		if (!abilities.every(ability => ability && ability.startsWith('la habilidad de '))) {
+			return row;
+		}
+		var names = abilities.map(ability => ability.slice('la habilidad de '.length));
+		var lastName = names.pop();
+		return 'las habilidades de ' + names.join(', ') + (joining == 'o' || joining == 'u' ? ' o ' : ' y ') + lastName;
+	});
+	return text.replace(/\[\s*([LKA])\s*(\d+)\s*\]/gi, (code, letter, index, offset) => {
+		var spanish = kept[index];
+		if (spanish == null) {
+			return code;
+		}
+		var sentenceStart = offset == 0 || /(^|[.!?:]\s+|\n)$/.test(text.slice(0, offset));
+		return (sentenceStart ? spanish[0].toUpperCase() : spanish[0].toLowerCase()) + spanish.slice(1);
+	});
+}
+//Words a general translator gets wrong in Magic's Spanish (and reminder text's period, inside its parenthesis as printed)
 function fixSpanishMagicTerms(text) {
-	return text.replace(/\bun instante\b/g, 'un instantáneo').replace(/\binstantes\b/g, 'instantáneos').replace(/\bInstante\b/g, 'Instantáneo')
+	return text.replace(/([^.!?])\)\./g, '$1.)').replace(/\bun instante\b/g, 'un instantáneo').replace(/\binstantes\b/g, 'instantáneos').replace(/\bInstante\b/g, 'Instantáneo')
 		.replace(/\bhechizo de brujería\b/gi, 'conjuro').replace(/\bbrujería\b/g, 'conjuro').replace(/\bBrujería\b/g, 'Conjuro')
 		.replace(/\bpiscina de maná/g, 'reserva de maná').replace(/\btokens\b/g, 'fichas').replace(/\btoken\b/g, 'ficha')
 		.replace(/\bcampo de juego\b/g, 'campo de batalla')
