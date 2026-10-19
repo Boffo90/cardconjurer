@@ -6316,6 +6316,9 @@ function importCard(cardObject) {
 			} else {
 				title += `(${card.type_line})`
 			}
+			if (card.translated_print) {
+				title += ' — translated'; //(not printed in this language: from the English print)
+			}
 			option.innerHTML = title;
 			option.value = optionIndex;
 			importIndex.appendChild(option);
@@ -6589,6 +6592,9 @@ function applyLearnedPrintedText(print, replicatePrint) {
 		if (learned.title != null && card.text.title) { card.text.title.text = learned.title; }
 		if (learned.type != null && card.text.type) { card.text.type.text = learned.type; }
 		if (learned.rules != null && card.text.rules) { card.text.rules.text = repairSavedSymbols(learned.rules); }
+	} else if (replicatePrint && print.translated_print) {
+		var made = print.printed_name_source == 'translation' || print.printed_text_source == 'translation' ? 'its name and text translated automatically (Google)' : `the name and rules text of its printings in ${(print.lang || '').toUpperCase()}${print.flavor_text ? ' and its flavor text translated automatically (Google)' : ''}`;
+		notify(`Auto frame: this print wasn't printed in ${(print.lang || '').toUpperCase()}: it was made from the English one, with ${made}. Correct it in the Text tab if needed and press "Remember for this print".`, 10);
 	} else if (replicatePrint && print.printed_name_source == 'translation') {
 		notify(`Auto frame: Scryfall and MTGJSON don't have this card's name in ${(print.lang || '').toUpperCase()}: it was translated automatically (Google)${print.printed_text_source == 'translation' ? ', and so was its text' : ''}, so it may not be the printed name. Correct it in the Text tab if needed and press "Remember for this print".`, 10);
 	} else if (replicatePrint && print.missing_printed_text) {
@@ -7087,7 +7093,8 @@ async function changeCardIndex() {
 		if (languageText) {
 			cardToImport.oracle_text = oldWordingForPrint(languageText.text, cardToImport);
 			cardToImport.printed_text_source = languageText.source;
-			if (languageText.source == 'translation' && cardToImport.flavor_text) {
+			//(a print not printed in this language has the English print's flavor text)
+			if ((languageText.source == 'translation' || cardToImport.translated_print) && cardToImport.flavor_text) {
 				cardToImport.flavor_text = (await machineTranslate(cardToImport.flavor_text, cardToImport.lang, cardToImport.english_name, cardToImport.name)) || cardToImport.flavor_text;
 			}
 		}
@@ -7443,7 +7450,57 @@ function loadAvailableCards(cardKeys = JSON.parse(localStorage.getItem('cardKeys
 }
 function importChanged() {
 	var unique = document.querySelector('#importAllPrints').checked ? 'prints' : '';
-	fetchScryfallData(document.querySelector("#import-name").value, importCard, unique);
+	var language = document.querySelector('#import-language').value;
+	if (language == 'en' || document.querySelector('#import-name').value.trim() == '') {
+		fetchScryfallData(document.querySelector("#import-name").value, importCard, unique);
+	} else {
+		importInLanguage(document.querySelector('#import-name').value, unique, language);
+	}
+}
+async function searchScryfallCards(cardName, unique, language) {
+	try {
+		var response = await fetch(`https://api.scryfall.com/cards/search?order=released&include_extras=true${unique ? '&unique=' + unique : ''}&q=name%3D${encodeURIComponent(cardName.replace(/ /g, '_'))}%20lang%3D${language}`);
+		return response.ok ? (await response.json()).data : [];
+	} catch (error) {
+		return [];
+	}
+}
+//Importing in another language than English: the card's prints in that language, and its English prints that have none in it as
+//if they did ("translated" in the list). Their name, type line and text come from another printing in that language, or Google's
+//translation of the English ones, like the prints Scryfall has without their text
+async function importInLanguage(cardName, unique, language) {
+	var [inLanguage, english] = await Promise.all([searchScryfallCards(cardName, unique, language), searchScryfallCards(cardName, unique, 'en')]);
+	if (document.querySelector('#import-name').value != cardName || document.querySelector('#import-language').value != language) {
+		return; //another card or language was asked for meanwhile
+	}
+	var printed = new Set(inLanguage.map(card => card.set + '/' + card.collector_number));
+	//(one print of each card, without all prints: the English one only when there's none in the language)
+	var translated = (unique ? english : (inLanguage.length ? [] : english)).filter(card => !printed.has(card.set + '/' + card.collector_number)).map(card => translatedPrint(card, language, inLanguage));
+	var cards = inLanguage.concat(translated).sort((a, b) => (b.released_at || '').localeCompare(a.released_at || ''));
+	if (!cards.length) {
+		cardLanguageSelect = document.querySelector('#import-language');
+		notify(`No cards found for "${cardName}" in ${cardLanguageSelect.options[cardLanguageSelect.selectedIndex].text}.`, 5);
+		return;
+	}
+	responseCards = [];
+	cards.forEach(card => processScryfallCard(card, responseCards));
+	importCard(responseCards);
+}
+//An English print as if it had been printed in this language: the name and type line of the card's prints in it (when it has
+//any), and its text looked for in this language when it's imported
+function translatedPrint(card, language, inLanguage) {
+	var copy = JSON.parse(JSON.stringify(card));
+	var printing = inLanguage.find(other => other.oracle_id == card.oracle_id && (other.printed_name || (other.card_faces || []).some(face => face.printed_name)));
+	var printingFaces = printing ? [printing].concat(printing.card_faces || []) : [];
+	[copy].concat(copy.card_faces || []).forEach((face, index) => {
+		delete face.printed_text;
+		face.printed_name = printingFaces[index] && printingFaces[index].printed_name;
+		face.printed_type_line = printingFaces[index] && printingFaces[index].printed_type_line;
+		['printed_name', 'printed_type_line'].forEach(key => face[key] || delete face[key]);
+		face.translated_print = true;
+	});
+	copy.lang = language;
+	return copy;
 }
 function saveCard(saveFromFile) {
 	var cardKeys = JSON.parse(localStorage.getItem('cardKeys')) || [];
