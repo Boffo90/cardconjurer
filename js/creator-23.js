@@ -7343,7 +7343,7 @@ async function changeCardIndex() {
 		document.querySelector('#info-number').value = printNumber;
 		document.querySelector('#info-rarity').value = (cardToImport.rarity || "")[0].toUpperCase();
 		document.querySelector('#info-set').value = printSet.toUpperCase();
-		document.querySelector('#info-language').value = (cardToImport.lang || "").toUpperCase();
+		document.querySelector('#info-language').value = printedLanguageCode(cardToImport.lang);
 		var setXhttp = new XMLHttpRequest();
 		setXhttp.onreadystatechange = function() {
 			if (this.readyState == 4 && this.status == 200) {
@@ -7501,6 +7501,7 @@ async function loadCard(selectedCardKey) {
 		document.querySelector('#info-number').value = card.infoNumber;
 		document.querySelector('#info-rarity').value = card.infoRarity;
 		document.querySelector('#info-set').value = card.infoSet;
+		card.infoLanguage = printedLanguageCode(card.infoLanguage); //(cards saved with Scryfall's codes: "ES")
 		document.querySelector('#info-language').value = card.infoLanguage;
 		document.querySelector('#info-note').value = card.infoNote;
 		copyrightElement('info-copyright-x').value = card.infoCopyrightX || 0;
@@ -7912,6 +7913,12 @@ async function languageTextOf(print) {
 	}
 	var translated = await machineTranslate(print.english_oracle_text, print.lang, print.english_name, print.name, true);
 	return translated ? {text: translated, source: 'translation'} : null;
+}
+//The language code printed in the collector's line, from Scryfall's: Spanish cards say "SP", Japanese "JP", Korean "KR", and
+//Chinese "CS" (simplified) and "CT" (traditional); the others are Scryfall's in capitals (EN, FR, DE, IT, PT, RU...)
+var printedLanguageCodes = {es: 'SP', ja: 'JP', ko: 'KR', zhs: 'CS', zht: 'CT'};
+function printedLanguageCode(lang) {
+	return printedLanguageCodes[(lang || '').toLowerCase()] || (lang || '').toUpperCase();
 }
 //Before Magic 2010 (July 2009) spells were "played", not "cast", and permanents came "into play", not "onto the battlefield": a
 //newer printing's Spanish text (or a translation of today's Oracle text) in the wording of an older print
@@ -8504,7 +8511,7 @@ if ('number' in defaultCollector) {
 	document.querySelector('#info-note').value = defaultCollector.note;
 	document.querySelector('#info-rarity').value = defaultCollector.rarity;
 	document.querySelector('#info-set').value = defaultCollector.setCode;
-	document.querySelector('#info-language').value = defaultCollector.lang;
+	document.querySelector('#info-language').value = printedLanguageCode(defaultCollector.lang);
 	if (defaultCollector.starDot) {setTimeout(function(){defaultCollector.starDot = false; toggleStarDot();}, 500);}
 } else {
 	document.querySelector('#info-number').value = date.getFullYear();
