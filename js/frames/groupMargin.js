@@ -1,12 +1,26 @@
 loadFramePacks([
 	{name:'Generic Margins', value:'Margin-1'},
+	{name:'Sewer (TMT) Margins', value:'MarginSewerTMT'},
+	{name:'Fable (ECL) Margins', value:'MarginFableECL'},
+	{name:'Elemental Margins (TLA)', value:'MarginElemental'},
+	{name:'Showcase Panel (SPM) Margins', value:'MarginShowcasePanel'},
+	{name:'Edge of Eternities Basics (EOE)', value:'MarginEOEBasics'},
+	{name:'Borderless Stellar Sights', value:'MarginBorderlessStellarSights'},
+	{name:'Borderless Source Material', value:'MarginFCA'},
+	{name:'Poster Stellar Sights', value:'MarginPosterStellarSights'},
+	{name:'Draconic Margins', value:'MarginDraconic'},
+	{name:'Japan Showcase Margins', value:'MarginJapanShowcase'},
+	{name:'Showcase Magnified Margins', value:'MarginShowcaseMagnified'},
+	{name:'Legends of Ixalan Margins', value:'MarginIxalanLegends'},
+	{name:'Memory Corridor Margins', value:'MarginMemoryCorridor'},
 	{name:'Breaking News Margin', value:'MarginBreakingNews'},
-	{name:'Vault Margin', value:'MarginVault'},
-	{name:'Wanted Poster Margin', value:'MarginWanted'},
+	{name:'Vault Margins', value:'MarginVault'},
+	{name:'Wanted Poster Margins', value:'MarginWanted'},
 	{name:'Enchanting Tales Margins', value:'MarginEnchantingTales'},
 	{name:'LTR Ring Margins', value:'MarginRing'},
 	{name:'D&D Module Margins', value:'MarginDNDModule'},
 	{name:'Mystical Archive Margins', value:'MarginMysticalArchive'},
+	{name:'Unfinity Basics Margins', value:'MarginUnfinity'},
 	{name:'Unstable Basics Margins', value:'MarginUnstable'},
 	{name:'Invocation Margins', value:'MarginInvocation'},
 	{name:'Accurate Frame Margins', value:'MarginNew'},
@@ -51,8 +65,11 @@ var loadMarginVersion = async () => {
 	if (card.version.includes('saga')) {
 		sagaEdited();
 	}
-	if (card.version.includes('class') && !card.version.includes('classicshifted')) {
+	if (card.version.includes('class') && !card.version.includes('classic')) {
 		classEdited();
+	}
+	if (card.version.includes('station')) {
+		stationEdited();
 	}
 	drawTextBuffer();
 	drawFrames();
