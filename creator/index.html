@@ -160,6 +160,8 @@
 									<div class='input-grid margin-bottom'>
 										<button id='addToLeftHalf' class='input' onclick='addFrame([{src:"/img/frames/maskLeftHalf.png", name:"Left Half"}])'>Add Frame to Card (Left Half)</button>
 										<button id='addToMiddleThird' class='input' onclick='addFrame([{src:"/img/frames/maskMiddleThird.png", name:"Middle Third"}])'>Add Frame to Card (Middle Third)</button>
+										<button id='addToTopHalf' class='input' onclick='addFrame([{src:"/img/frames/maskTopHalf.png", name:"Top Half"}])'>Add Frame to Card (Top Half)</button>
+										<button id='addToBottomHalf' class='input' onclick='addFrame([{src:"/img/frames/maskBottomHalf.png", name:"Bottom Half"}])'>Add Frame to Card (Bottom Half)</button>
 									</div>
 									<h5 class='padding input-description'>You can now double click frames and masks to add them to the card. You can do so while holding the shift, control, or alt keys to add to the right half, left half, or middle third, respectively.</h5>
 								</div>
@@ -286,6 +288,12 @@
 								<span class='checkmark'></span>
 							</label>
 						</div>
+						<div class='readable-background padding margin-bottom'>
+							<label class='checkbox-container input'>Auto-italicize reminder text
+								<input id='italicize-reminder-text' type='checkbox' onchange='textEdited();'>
+								<span class='checkmark'></span>
+							</label>
+						</div>
 						<div class='readable-background padding'>
 							<h5 class='padding input-description'>Add a textbox to your card</h5>
 							<div class='padding input-grid'>
@@ -310,6 +318,7 @@
 											<input id='art-update-autofit' type='checkbox' onchange='setAutofit();'>
 											<span class='checkmark'></span>
 										</label>
+									<button class='input margin-top' onclick='pasteArt();'>Paste from clipboard</button>
 								</div>
 							</div>
 							<h5 class='margin-bottom padding input-description'>Or enter a card name</h5>
@@ -345,7 +354,11 @@
 								<input id='art-rotate' type='number' class='input' oninput='artEdited();' value=0 step=1 min=0 max=360>
 							</div>
 							<div class='input-grid'>
-								<button class='input' onclick='autoFitArt();'>Auto Fit Art</button>
+								<button class='input' onclick='autoFitArt(true);'>Auto Fit Art</button>
+								<label class='checkbox-container input' title='Do not auto-fit art when changing frames'>Preserve art position
+									<input id='art-preserve-position' type='checkbox' onchange='setPreserveArtPosition();'>
+									<span class='checkmark'></span>
+								</label>
 							</div>
 						</div>
 						<div class='readable-background padding margin-bottom'>
@@ -438,6 +451,13 @@
 							<h5 class='padding margin-bottom input-description'>Clears the Set Symbol, making it blank</h5>
 							<button class='input margin-bottom' onclick='uploadSetSymbol(blank.src);'>Remove Set Symbol</button>
 						</div>
+						<div class='readable-background padding margin-bottom'>
+							<h5 class='input-description margin-bottom'>Click and drag to move set symbol instead of art (hold shift to zoom)</h5>
+							<label class='checkbox-container input margin-bottom'>Click and drag to move set symbol instead of art
+								<input id='drag-target-setSymbol' type='checkbox'>
+								<span class='checkmark'></span>
+							</label>
+						</div>
 						<div class='readable-background padding'>
 							<h5 class='input-description margin-bottom'>Lock the set symbol code (saves between reloads)</h5>
 							<label class='checkbox-container input margin-bottom'>Lock set symbol code
@@ -500,6 +520,8 @@
 								<option value="/img/watermarks/school-witherbloom.svg">Witherbloom</option>
 								<option value="/img/watermarks/school-lorehold.svg">Lorehold</option>
 								<option value="/img/watermarks/school-quandrix.svg">Quandrix</option>
+								<option disabled>Echoverse (Reality Fracture)</option>
+								<option value="/img/watermarks/fracture.svg">Echoverse</option>
 								<option disabled>Families (New Capenna)</option>
 								<option value="/img/watermarks/family-brokers.svg">Brokers</option>
 								<option value="/img/watermarks/family-obscura.svg">Obscura</option>
@@ -528,6 +550,11 @@
 								<option value="/img/watermarks/faction-league-of-dastardly-doom.svg">League of Dastardly Doom</option>
 								<option value="/img/watermarks/faction-goblin-explosioneers.svg">Goblin Explosioneers</option>
 								<option value="/img/watermarks/faction-crossbreed-labs.svg">Crossbreed Labs</option>
+								<option disabled>Avatar The Last Airbender (TLA)</option>
+								<option value="/img/watermarks/atla-water.svg">Water Tribe</option>
+								<option value="/img/watermarks/atla-earth.svg">Earth Kingdom</option>
+								<option value="/img/watermarks/atla-fire.svg">Fire Nation</option>
+								<option value="/img/watermarks/atla-air.svg">Air Nomads</option>
 								<option disabled>Custome</option>
 								<option value="/img/watermarks/purple.svg">Purple Mana</option>
 							</select>
@@ -735,6 +762,10 @@
 							</select>
 						</div>
 						<div class='readable-background margin-bottom padding'>
+							<h5 class='padding margin-bottom input-description'>Paste full text</h5>
+							<button class='input margin-bottom' onclick='pasteCardText();'>Paste card</button>
+						</div>
+						<div class='readable-background margin-bottom padding'>
 							<h5 class='padding margin-bottom input-description'>Batch render for Cardwright: load a card list (.json, e.g. an order exported from Volcan Proxies). Every Magic card with its exact print is rebuilt here like "Auto (from imported print)" does, and you get a .zip with the PNGs and a new list. Unzip it and import that list in Cardwright (Import → "Card list…"). Other cards keep their original image. Scryfall's art is cut to the old art box, so borderless and full art cards keep the Scryfall image unless you put the full illustration at local_art/full/&lt;set&gt;/&lt;number&gt;.png (e.g. local_art/full/fca/31.png); any card with a full illustration there uses it.</h5>
 							<input id='batch-file' type='file' accept='.json' class='input margin-bottom' oninput='batchFileChosen(event);'>
 							<div class='input-grid margin-bottom'>
@@ -754,6 +785,8 @@
 						<div class='readable-background padding margin-bottom'>
 							<h5 class='padding margin-bottom input-description'>Download all saved cards</h5>
 							<button class='input margin-bottom' onclick='downloadSavedCards();'>Download All</button>
+							<h5 class='padding margin-bottom input-description'>Download all saved card images as a zip file (can take a long time)</h5>
+							<button class='input margin-bottom' onclick="bulkDownloadZip();">Download All Images</button>
 							<h5 class='padding margin-bottom input-description'>Upload previously downloaded file of saved cards (downloaded from above)</h5>
 							<input type='file' accept='.cardconjurer,.txt' class='input margin-bottom' oninput='uploadSavedCards(event);'>
 							<h5 class='padding margin-bottom input-description'>Delete ALL saved cards</h5>
@@ -802,6 +835,14 @@
 							<option value="8th">8th Edition</option>
 							<option value="Seventh">Seventh Edition</option>
 
+							<option disabled>Showcase frames</option>
+							<option value="Vault">Vault (BIG)</option>
+
+							<option disabled>Alternative Layouts</option>
+							<option value="Adventure">Adventure</option>
+							<option value="Omen">Omen</option>
+							<option value="Prepare">Prepare</option>
+
 							<option disabled>Redone frames</option>
 							<option value="M15RegularNew">Regular (Accurate)</option>
 							<option value="FullArtNew">Full art (Accurate)</option>
@@ -814,6 +855,12 @@
 						</select>
 						<!-- <button class='input' onclick='autoFrame("M15");'>M15</button>
 						<button class='input' onclick='autoFrame("UB");'>Universes Beyond</button> -->
+					</div>
+					<div class='padding input-grid'>
+						<label class='checkbox-container input'>Use Nyx frame for all Enchantments (where applicable)
+							<input id='autoframe-always-nyx' type='checkbox' onchange='setAutoframeNyx(this.checked);'>
+							<span class='checkmark'></span>
+						</label>
 					</div>
 				</div>
 				<div class='readable-background padding'>

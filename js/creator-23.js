@@ -939,6 +939,16 @@ function autoFrame() {
 		return;
 	}
 
+	//frames built from their pack's own frames (cardconjurer.app's Vault, Adventure, Omen and Prepare auto frames)
+	if (['Vault', 'Adventure', 'Omen', 'Prepare'].includes(frame)) {
+		if (autoFramePack != frame) {
+			loadFramePackForAutoFrame(frame).then(() => { autoFramePack = frame; autoFrame(); });
+			return;
+		}
+		var shownFace = (typeof scryfallCard != 'undefined' && scryfallCard && scryfallCard[document.querySelector('#import-index').value]) || {};
+		buildPrintPackFrames({pack: frame, crown: frame == 'Adventure' ? 'm15' : null}, colors, manaText, typeText, ptText, shownFace);
+		return;
+	}
 	var group;
 	var framing;
 	if (frame == 'M15Regular-1') {
@@ -1215,7 +1225,7 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 	//which color each part of the frame takes
 	var maskLetters = {
 		'Loyalty': ['frame'], 'Defense': ['frame'], 'Bevel': ['frame'], 'Flipside': ['pinline'], 'MDFC Arrow': ['pinline'], 'Reminder': ['pinline'],
-		'Banner': ['pinline'], 'Pinline': ['pinline', 'pinlineRight'], 'Twins': ['typeTitle'], 'Type': ['typeTitle'], 'Title': ['typeTitle'],
+		'Banner': ['pinline'], 'Pinline': ['pinline', 'pinlineRight'], 'Pinlines': ['pinline', 'pinlineRight'], 'Twins': ['typeTitle'], 'Type': ['typeTitle'], 'Title': ['typeTitle'],
 		'Rules': ['rules', 'rulesRight'], 'Text': ['rules', 'rulesRight'], 'Frame': ['frame', 'frameRight'], 'Border': ['frame']
 	};
 
@@ -1598,7 +1608,7 @@ async function autoM15Frame(colors, mana_cost, type_line, power) {
 	var style = 'regular';
 	if (type_line.toLowerCase().includes('snow')) {
 		style = 'snow';
-	} else if (type_line.toLowerCase().includes('enchantment creature') || type_line.toLowerCase().includes('enchantment artifact')) {
+	} else if (nyxFrameFor(type_line)) {
 		style = 'Nyx';
 	}
 
@@ -1661,7 +1671,7 @@ async function autoM15NewFrame(colors, mana_cost, type_line, power, style = 'reg
 	if (style != 'ub' && style != 'fullart') {
 	 	if (type_line.toLowerCase().includes('snow')) {
 			style = 'snow';
-		} else if (type_line.toLowerCase().includes('enchantment creature') || type_line.toLowerCase().includes('enchantment artifact')) {
+		} else if (nyxFrameFor(type_line)) {
 			style = 'Nyx';
 		}
 	}
@@ -1729,7 +1739,7 @@ async function autoM15EighthFrame(colors, mana_cost, type_line, power) {
 	var style = 'regular';
 	if (type_line.toLowerCase().includes('snow')) {
 		style = 'snow';
-	} else if (type_line.toLowerCase().includes('enchantment creature') || type_line.toLowerCase().includes('enchantment artifact')) {
+	} else if (nyxFrameFor(type_line)) {
 		style = 'Nyx';
 	}
 
@@ -1787,7 +1797,7 @@ async function autoM15EighthUBFrame(colors, mana_cost, type_line, power) {
 	var style = 'regular';
 	if (type_line.toLowerCase().includes('snow')) {
 		style = 'snow';
-	} else if (type_line.toLowerCase().includes('enchantment creature') || type_line.toLowerCase().includes('enchantment artifact')) {
+	} else if (nyxFrameFor(type_line)) {
 		style = 'Nyx';
 	}
 
@@ -1843,7 +1853,7 @@ async function autoBorderlessFrame(colors, mana_cost, type_line, power) {
 
 	var properties = cardFrameProperties(colors, mana_cost, type_line, power, 'Borderless');
 	var style = 'regular';
-	if (type_line.toLowerCase().includes('enchantment creature') || type_line.toLowerCase().includes('enchantment artifact')) {
+	if (nyxFrameFor(type_line)) {
 		style = 'Nyx';
 	}
 
@@ -1929,7 +1939,7 @@ async function autoExtendedArtFrame(colors, mana_cost, type_line, power, short) 
 	var style = 'regular';
 	if (type_line.toLowerCase().includes('snow')) {
 		style = 'snow';
-	} else if (type_line.toLowerCase().includes('enchantment creature') || type_line.toLowerCase().includes('enchantment artifact')) {
+	} else if (nyxFrameFor(type_line)) {
 		style = 'Nyx';
 	}
 
@@ -1991,7 +2001,7 @@ async function autoEtchedFrame(colors, mana_cost, type_line, power) {
 	var style = 'regular';
 	if (type_line.toLowerCase().includes('snow')) {
 		style = 'snow';
-	} else if (type_line.toLowerCase().includes('enchantment creature') || type_line.toLowerCase().includes('enchantment artifact')) {
+	} else if (nyxFrameFor(type_line)) {
 		style = 'Nyx';
 	}
 
@@ -4447,6 +4457,147 @@ function rulesTextObstacles(textX, textY) {
 		};
 	});
 }
+//Ruby text (cardconjurer.app's {ruby:base:annotation}: furigana or pinyin over the base text, or beside it in vertical text)
+//Pre-scan ruby codes to find the smallest annotation size needed so all ruby text is consistent
+function prescanRubySize(splitText, textObject, ctx, textSize, fontStyle, font, fontExt) {
+	var annSize = textObject.vertical ? textSize * 0.35 : textSize * 0.5;
+	for (var i = 0; i < splitText.length; i++) {
+		var word = splitText[i];
+		if (!word || !word.toLowerCase().startsWith('{ruby:')) { continue; }
+		var parts = word.replace(/[{}]/g, '').split(':');
+		var base = parts[1] || '';
+		var annotation = parts[2] || '';
+		if (base.length == 0) { continue; }
+		if (textObject.vertical) {
+			var charsPerBase = Math.ceil(annotation.length / base.length);
+			for (var j = 0; j < base.length; j++) {
+				var charCount = Math.min(charsPerBase, annotation.length - j * charsPerBase);
+				if (charCount > 0) {
+					annSize = Math.min(annSize, textSize / charCount);
+				}
+			}
+		} else {
+			var baseWidth = ctx.measureText(base).width;
+			ctx.font = fontStyle + annSize + 'px ' + font + fontExt;
+			var annWidth = ctx.measureText(annotation).width;
+			if (annWidth > baseWidth && baseWidth > 0) {
+				annSize = Math.min(annSize, annSize * (baseWidth / annWidth));
+			}
+			ctx.font = fontStyle + textSize + 'px ' + font + fontExt;
+		}
+	}
+	return annSize;
+}
+//Draw ruby text (base with annotation above or to the right)
+function drawRubyText(word, textObject, ctx, paragraphCtx, lineCanvas, annSize, state, opts) {
+	var parts = word.replace(/[{}]/g, '').split(':');
+	var base = parts[1] || '';
+	var annotation = parts[2] || '';
+	var savedFont = ctx.font;
+	if (textObject.vertical) {
+		drawRubyVertical(base, annotation, ctx, paragraphCtx, lineCanvas, annSize, state, opts, savedFont);
+	} else {
+		drawRubyHorizontal(base, annotation, ctx, paragraphCtx, lineCanvas, annSize, state, opts, savedFont);
+	}
+}
+//Vertical ruby: base chars stacked top-to-bottom, annotation to the right
+function drawRubyVertical(base, annotation, ctx, paragraphCtx, lineCanvas, annSize, state, opts, savedFont) {
+	var charsPerBase = Math.ceil(annotation.length / base.length);
+	for (var i = 0; i < base.length; i++) {
+		var baseChar = base[i];
+		var annStart = i * charsPerBase;
+		var annChars = annotation.substring(annStart, Math.min(annStart + charsPerBase, annotation.length));
+		//Flush line before drawing next base character
+		if (i > 0) {
+			var hAdj = 0;
+			if (opts.textAlign == 'center') { hAdj = (opts.textWidth - state.currentX) / 2; }
+			else if (opts.textAlign == 'right') { hAdj = opts.textWidth - state.currentX; }
+			if (state.currentX > state.widestLineWidth) { state.widestLineWidth = state.currentX; }
+			paragraphCtx.drawImage(lineCanvas, hAdj, state.currentY);
+			state.lineY = 0;
+			ctx.clearRect(0, 0, lineCanvas.width, lineCanvas.height);
+			state.currentX = opts.startingCurrentX;
+			state.currentY += opts.textSize + state.newLineSpacing;
+			state.newLineSpacing = (textObject.lineSpacing || 0) * opts.textSize;
+		}
+		//Draw base character
+		var baseCharWidth = ctx.measureText(baseChar).width;
+		var baseY = opts.canvasMargin + opts.textSize * opts.textFontHeightRatio + state.lineY;
+		if (opts.textOutlineWidth >= 1) { ctx.strokeText(baseChar, state.currentX + opts.canvasMargin, baseY); }
+		ctx.fillText(baseChar, state.currentX + opts.canvasMargin, baseY);
+		//Draw annotation chars to the right, centered vertically
+		if (annChars.length > 0) {
+			ctx.font = opts.textFontStyle + annSize + 'px ' + opts.textFont + opts.textFontExtension;
+			var annX = state.currentX + opts.canvasMargin + baseCharWidth;
+			var totalAnnH = annChars.length * annSize;
+			var baseTopY = opts.canvasMargin + state.lineY;
+			var annStartY = baseTopY + (opts.textSize - totalAnnH) / 2 + annSize * opts.textFontHeightRatio - opts.textSize * 0.08;
+			for (var j = 0; j < annChars.length; j++) {
+				var charY = annStartY + j * annSize;
+				if (opts.textOutlineWidth >= 1) { ctx.strokeText(annChars[j], annX, charY); }
+				ctx.fillText(annChars[j], annX, charY);
+			}
+			ctx.font = savedFont;
+		}
+		state.currentX += baseCharWidth;
+	}
+}
+//Horizontal ruby: annotation drawn above base text, evenly distributed
+function drawRubyHorizontal(base, annotation, ctx, paragraphCtx, lineCanvas, annSize, state, opts, savedFont) {
+	var baseWidth = ctx.measureText(base).width;
+	ctx.font = opts.textFontStyle + annSize + 'px ' + opts.textFont + opts.textFontExtension;
+	var annWidth = ctx.measureText(annotation).width;
+	ctx.font = savedFont;
+	var totalWidth = Math.max(baseWidth, annWidth);
+	//Wrap to new line if needed
+	if (totalWidth + state.currentX >= opts.textWidth && opts.textArcRadius == 0 && !opts.textOneLine) {
+		var hAdj = 0;
+		if (opts.textAlign == 'center') { hAdj = (opts.textWidth - state.currentX) / 2; }
+		else if (opts.textAlign == 'right') { hAdj = opts.textWidth - state.currentX; }
+		if (state.currentX > state.widestLineWidth) { state.widestLineWidth = state.currentX; }
+		paragraphCtx.drawImage(lineCanvas, hAdj, state.currentY);
+		state.lineY = 0;
+		ctx.clearRect(0, 0, lineCanvas.width, lineCanvas.height);
+		state.currentX = opts.startingCurrentX;
+		state.currentY += opts.textSize + state.newLineSpacing;
+		state.newLineSpacing = (textObject.lineSpacing || 0) * opts.textSize;
+	}
+	var baseOffsetX = (totalWidth - baseWidth) / 2;
+	var baseY = opts.canvasMargin + opts.textSize * opts.textFontHeightRatio + state.lineY;
+	//Position annotation using font metrics for zero-gap placement
+	var baseMetrics = ctx.measureText(base);
+	var baseFontAscent = baseMetrics.fontBoundingBoxAscent || opts.textSize * opts.textFontHeightRatio;
+	ctx.font = opts.textFontStyle + annSize + 'px ' + opts.textFont + opts.textFontExtension;
+	var annMetrics = ctx.measureText(annotation);
+	var annFontDescent = annMetrics.fontBoundingBoxDescent || annSize * 0.1;
+	var annY = baseY - baseFontAscent - annFontDescent;
+	//Distribute annotation chars evenly when base is wider
+	if (annotation.length > 1 && baseWidth > annWidth) {
+		var charWidths = [];
+		var totalCharWidth = 0;
+		for (var i = 0; i < annotation.length; i++) {
+			var w = ctx.measureText(annotation[i]).width;
+			charWidths.push(w);
+			totalCharWidth += w;
+		}
+		var spacing = (baseWidth - totalCharWidth) / (annotation.length + 1);
+		var drawX = state.currentX + opts.canvasMargin + baseOffsetX + spacing;
+		for (var i = 0; i < annotation.length; i++) {
+			if (opts.textOutlineWidth >= 1) { ctx.strokeText(annotation[i], drawX, annY); }
+			ctx.fillText(annotation[i], drawX, annY);
+			drawX += charWidths[i] + spacing;
+		}
+	} else {
+		var annOffsetX = (totalWidth - annWidth) / 2;
+		if (opts.textOutlineWidth >= 1) { ctx.strokeText(annotation, state.currentX + opts.canvasMargin + annOffsetX, annY); }
+		ctx.fillText(annotation, state.currentX + opts.canvasMargin + annOffsetX, annY);
+	}
+	ctx.font = savedFont;
+	//Draw base text
+	if (opts.textOutlineWidth >= 1) { ctx.strokeText(base, state.currentX + opts.canvasMargin + baseOffsetX, baseY); }
+	ctx.fillText(base, state.currentX + opts.canvasMargin + baseOffsetX, baseY);
+	state.currentX += totalWidth;
+}
 function writeText(textObject, targetContext) {
 	//Most bits of info about text loaded, with defaults when needed
 	var textX = scaleX(textObject.x) || scaleX(0);
@@ -4486,6 +4637,17 @@ function writeText(textObject, targetContext) {
 
 		rulesText = rulesText.replace(/ ?{i}\([^\)]+\){\/i}/g, '');
 
+		rawText = rulesText + flavorText;
+	} else if (document.querySelector('#italicize-reminder-text').checked && textObject.name && textObject.name != 'Title' && textObject.name != 'Type' && textObject.name != 'Mana Cost' && textObject.name != 'Power/Toughness') {
+		//(cardconjurer.app's "Auto-italicize reminder text": every text in parentheses in italics)
+		var rulesText = rawText;
+		var flavorText = '';
+		var flavorIndex = rawText.indexOf('{flavor}') || rawText.indexOf('///');
+		if (flavorIndex >= 0) {
+			flavorText = rawText.substring(flavorIndex);
+			rulesText = rawText.substring(0, flavorIndex);
+		}
+		rulesText = rulesText.replace(/(\{i\})?\(([^)]+)\)(\{\/i\})?/g, '{i}($2){/i}');
 		rawText = rulesText + flavorText;
 	}
 	if (textAllCaps) {
@@ -4539,7 +4701,7 @@ function writeText(textObject, targetContext) {
 	}
 	//Japanese and Chinese have no spaces: a line can break after any of their characters, except before closing punctuation,
 	//the long vowel mark and small kana (kinsoku), which stay with the character before them
-	splitText = splitText.replace(new RegExp('([' + cjkCharacters + '])(?![' + cjkNoLineStart + '])', 'g'), '$1' + splitString);
+	splitText = splitText.replace(new RegExp('(\\{[^}]*\\})|([' + cjkCharacters + '])(?![' + cjkNoLineStart + '])', 'g'), (match, code, character) => code || character + splitString);
 	splitText = splitText.replace(/{/g, splitString + '{').replace(/}/g, '}' + splitString).replace(/ /g, splitString + ' ' + splitString).split(splitString);
 
 	splitText = splitText.filter(item => item);
@@ -4674,6 +4836,7 @@ function writeText(textObject, targetContext) {
 		lineContext.lineWidth = textOutlineWidth;
 		//Begin looping through words/codes
 		var tokenIndex = -1;
+		var rubyGlobalAnnSize = prescanRubySize(splitText, textObject, lineContext, textSize, textFontStyle, textFont, textFontExtension);
 		innerloop: for (word of splitText) {
 			tokenIndex ++;
 			var wordToWrite = word;
@@ -4694,6 +4857,8 @@ function writeText(textObject, targetContext) {
 					newLine = true;
 					startingCurrentX = 0;
 					newLineSpacing = textSize * ('paragraphSpacing' in textObject ? textObject.paragraphSpacing : 0.35);
+				} else if (possibleCode == 'bullet' || possibleCode == '•') {
+					wordToWrite = '•';
 				} else if (possibleCode == 'lns' || possibleCode == 'linenospace') {
 					newLine = true;
 				} else if (possibleCode == 'bar') {
@@ -4755,6 +4920,16 @@ function writeText(textObject, targetContext) {
 					textJustify = 'center';
 				} else if (possibleCode == 'justify-right') {
 					textJustify = 'right';
+				} else if (possibleCode.startsWith('ruby:')) {
+					var rubyState = {currentX:currentX, currentY:currentY, lineY:lineY, widestLineWidth:widestLineWidth, newLineSpacing:newLineSpacing};
+					drawRubyText(word, textObject, lineContext, paragraphContext, lineCanvas, rubyGlobalAnnSize, rubyState, {
+						textSize:textSize, textFontStyle:textFontStyle, textFont:textFont, textFontExtension:textFontExtension,
+						textFontHeightRatio:textFontHeightRatio, textAlign:textAlign, textWidth:textWidth, textArcRadius:textArcRadius,
+						textOneLine:textOneLine, textOutlineWidth:textOutlineWidth, canvasMargin:canvasMargin, startingCurrentX:startingCurrentX
+					});
+					currentX = rubyState.currentX; currentY = rubyState.currentY; lineY = rubyState.lineY;
+					widestLineWidth = rubyState.widestLineWidth; newLineSpacing = rubyState.newLineSpacing;
+					wordToWrite = null;
 				} else if (possibleCode.includes('conditionalcolor')) {
 					var codeParams = possibleCode.split(":");
 					for (var eligibleFrame of codeParams[1].split(",")) {
@@ -5305,7 +5480,7 @@ function uploadArt(imageSource, otherParams, popOutSource) {
 		art.onload = function() {
 			var artBounds = card.artBounds;
 			card.artBounds = {x: 0, y: 0, width: 1, height: 1};
-			autoFitArt();
+			autoFitArt(true);
 			card.artBounds = artBounds;
 			art.onload = artEdited;
 		};
@@ -5319,7 +5494,11 @@ function artEdited() {
 	card.artRotate = document.querySelector('#art-rotate').value;
 	drawCard();
 }
-function autoFitArt() {
+function autoFitArt(evenIfPreserved) {
+	//(cardconjurer.app's "Preserve art position": the art stays where it is when the frame changes)
+	if (!evenIfPreserved && document.querySelector('#art-preserve-position') && document.querySelector('#art-preserve-position').checked) {
+		return;
+	}
 	document.querySelector('#art-rotate').value = 0;
 	if (art.width / art.height > scaleWidth(card.artBounds.width) / scaleHeight(card.artBounds.height)) {
 		document.querySelector('#art-y').value = Math.round(scaleY(card.artBounds.y) - scaleHeight(card.marginY));
@@ -5623,6 +5802,10 @@ function artStartDrag(e) {
 	draggingArt = true;
 }
 function artDrag(e) {
+	var target = document.querySelector('#drag-target-setSymbol').checked ? "setSymbol" : "art";
+	var canRotate = target == "art";
+	var edited = target == "art" ? artEdited : setSymbolEdited;
+
 	e.preventDefault();
 	e.stopPropagation();
 	if (draggingArt && Date.now() > lastArtDragTime + 25) {
@@ -5630,13 +5813,13 @@ function artDrag(e) {
 		if (e.shiftKey || e.ctrlKey) {
 			startX = parseInt(e.clientX);
 			const endY = parseInt(e.clientY);
-			if (e.ctrlKey) {
-				document.querySelector('#art-rotate').value = Math.round((parseFloat(document.querySelector('#art-rotate').value) - (startY - endY) / 10) % 360 * 10) / 10;
+			if (e.ctrlKey && canRotate) {
+				document.querySelector(`#${target}-rotate`).value = Math.round((parseFloat(document.querySelector(`#${target}-rotate`).value) - (startY - endY) / 10) % 360 * 10) / 10;
 			} else {
-				document.querySelector('#art-zoom').value = Math.round((parseFloat(document.querySelector('#art-zoom').value) * (1.002 ** (startY - endY))) * 10) / 10;
+				document.querySelector(`#${target}-zoom`).value = Math.round((parseFloat(document.querySelector(`#${target}-zoom`).value) * (1.002 ** (startY - endY))) * 10) / 10;
 			}
 			startY = endY;
-			artEdited();
+			edited();
 		} else {
 			const endX = parseInt(e.clientX);
 			const endY = parseInt(e.clientY);
@@ -5647,11 +5830,11 @@ function artDrag(e) {
 				changeX = -changeY;
 				changeY = temp;
 			}
-			document.querySelector('#art-x').value = parseInt(document.querySelector('#art-x').value) + changeX;
-			document.querySelector('#art-y').value = parseInt(document.querySelector('#art-y').value) + changeY;
+			document.querySelector(`#${target}-x`).value = parseInt(document.querySelector(`#${target}-x`).value) + changeX;
+			document.querySelector(`#${target}-y`).value = parseInt(document.querySelector(`#${target}-y`).value) + changeY;
 			startX = endX;
 			startY = endY;
-			artEdited();
+			edited();
 		}
 
 	}
@@ -8703,6 +8886,88 @@ async function startBatchRender() {
 	var renderedCount = files.filter(file => file.name.startsWith('cards/')).length;
 	batchStatus(`${batchStopRequested ? 'Stopped. ' : ''}${done} of ${total} card(s) done, ${renderedCount} image(s) in ${zipName}.` + (report.length ? ` ${report.length} note(s) in report.txt.` : '') + ' Unzip it and import cardwright-list.json in Cardwright (Import → "Card list…").');
 }
+//Nyx frames: enchantment creatures and artifacts, and every enchantment with cardconjurer.app's "Use Nyx frame for all
+//Enchantments"
+function nyxFrameFor(typeLine) {
+	var type = (typeLine || '').toLowerCase();
+	var always = document.querySelector('#autoframe-always-nyx');
+	return type.includes('enchantment creature') || type.includes('enchantment artifact') || (always && always.checked && type.includes('enchantment'));
+}
+function setAutoframeNyx() {
+	localStorage.setItem('autoframe-always-nyx', document.querySelector('#autoframe-always-nyx').checked);
+	setAutoFrame();
+}
+function setPreserveArtPosition() {
+	localStorage.setItem('preserveArtPosition', document.querySelector('#art-preserve-position').checked);
+}
+//The art from the clipboard (cardconjurer.app)
+async function pasteArt() {
+	try {
+		for (var item of await navigator.clipboard.read()) {
+			var type = item.types.find(type => type.startsWith('image/'));
+			if (type) {
+				uploadArt(URL.createObjectURL(await item.getType(type)), document.querySelector('#art-update-autofit').checked ? 'autoFit' : '');
+				return;
+			}
+		}
+		notify('No image found in clipboard!');
+	} catch (error) {
+		notify('Clipboard access not allowed or no image available.');
+	}
+}
+//A card's full text from the clipboard, imported (cardconjurer.app): its name (and mana cost) on the first line, then its type,
+//text and power/toughness
+async function pasteCardText() {
+	try {
+		importCard([scryfallCardFromText(await navigator.clipboard.readText())]);
+	} catch (error) {
+		notify('Clipboard access failed. Did you click the button?');
+	}
+}
+//Every saved card's image in a zip (cardconjurer.app's "Download All Images"): each one is loaded and drawn in turn, then the
+//card you had is put back
+async function bulkDownloadZip() {
+	var cardKeys = JSON.parse(localStorage.getItem('cardKeys')) || [];
+	if (!cardKeys.length) {
+		notify('No saved cards found to download.', 3);
+		return;
+	}
+	var tempKey = '__temp_current_card_state__';
+	var current = JSON.parse(JSON.stringify(card));
+	(current.frames || []).forEach(frame => {
+		delete frame.image;
+		(frame.masks || []).forEach(mask => delete mask.image);
+	});
+	localStorage.setItem(tempKey, JSON.stringify(current));
+	var files = [];
+	var names = new Set();
+	for (var [index, key] of cardKeys.entries()) {
+		notify(`Processing card ${index + 1} of ${cardKeys.length}: ${key}`, 2);
+		try {
+			var previousArtSource = art.src;
+			await loadCard(key);
+			await batchWaitForCard(previousArtSource);
+			var blob = await new Promise(resolve => cardCanvas.toBlob(resolve, 'image/png'));
+			var name = (key.replace(/[\\/:*?"<>|]+/g, '-').trim() || 'card');
+			for (var copy = 2; names.has(name.toLowerCase()); copy ++) {
+				name = key.replace(/[\\/:*?"<>|]+/g, '-').trim() + ' (' + copy + ')';
+			}
+			names.add(name.toLowerCase());
+			files.push({name: name + '.png', data: new Uint8Array(await blob.arrayBuffer())});
+		} catch (error) {
+			notify(`Skipping card "${key}" due to an error.`, 3);
+		}
+	}
+	await loadCard(tempKey);
+	localStorage.removeItem(tempKey);
+	var link = document.createElement('a');
+	link.href = URL.createObjectURL(new Blob([makeZip(files)], {type: 'application/zip'}));
+	link.download = 'CardConjurer_Bulk.zip';
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	notify(`${files.length} card image(s) in CardConjurer_Bulk.zip.`, 5);
+}
 //Minimal zip writer ("stored", no compression: PNGs are already compressed)
 var crcTable = null;
 function crc32(bytes) {
@@ -8776,6 +9041,8 @@ function makeZip(files) {
 
 // auto load frame version (user defaults)
 document.querySelector('#ai-art-detail').value = localStorage.getItem('aiArtDetail') || 'balanced';
+document.querySelector('#autoframe-always-nyx').checked = localStorage.getItem('autoframe-always-nyx') == 'true';
+document.querySelector('#art-preserve-position').checked = localStorage.getItem('preserveArtPosition') == 'true';
 document.querySelector('#art-pop-out').checked = localStorage.getItem('artPopOut') != 'false';
 if (!localStorage.getItem('autoLoadFrameVersion')) {
 	localStorage.setItem('autoLoadFrameVersion', document.querySelector('#autoLoadFrameVersion').checked);
