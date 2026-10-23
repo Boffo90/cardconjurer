@@ -1069,11 +1069,19 @@ function autoFrameStyleFromPrint(print) {
 		}
 	} else if (layout == 'modal_dfc') {
 		plan = {pack: borderless ? 'ModalBorderless' : (extended ? 'ModalExtended' : 'ModalRegular'), face: face, crown: borderless || extended ? null : 'modal'};
+	} else if (layout == 'adventure' && (print.sibling_faces || []).some(sibling => (sibling.type_line || '').includes('Omen'))) {
+		plan = {pack: 'Omen'}; //Tarkir: Dragonstorm's Omens (Scryfall lists them as adventures)
 	} else if (layout == 'adventure') {
 		var storybook = effects.includes('showcase') ? {eld: 'Storybook', woe: 'StorybookWOE'}[print.set] : null;
 		plan = {pack: storybook || 'Adventure', crown: storybook ? null : 'm15'};
+	} else if (layout == 'prepare') {
+		plan = {pack: 'Prepare'}; //Secrets of Strixhaven
+	} else if (layout == 'split' && (print.sibling_faces || []).some(sibling => (sibling.type_line || '').includes('Room'))) {
+		plan = {pack: 'Room'}; //Duskmourn's Rooms (split cards for Scryfall)
 	} else if (layout == 'split') {
 		plan = {pack: (print.keywords || []).includes('Aftermath') ? 'Aftermath' : 'Split'};
+	} else if ((print.keywords || []).includes('Station')) {
+		plan = {pack: borderless ? 'StationBorderless' : 'StationRegular'}; //Edge of Eternities' Spacecraft and Planets
 	} else if (['flip', 'class', 'case', 'leveler', 'prototype', 'mutate'].includes(layout)) {
 		plan = {pack: {flip: 'Flip', class: 'Class', case: 'Case', leveler: 'Levelers', prototype: 'Prototype', mutate: 'M15Mutate'}[layout], crown: ['class', 'case', 'mutate'].includes(layout) ? 'm15' : null};
 	} else if (layout == 'token' || layout == 'double_faced_token') {
@@ -1264,7 +1272,27 @@ async function buildPrintPackFrames(plan, colors, manaCost, typeLine, power, pri
 			partsAdded ++;
 		});
 	} else if (mainEntry.masks && mainEntry.masks.length) {
+		//Omens' and Prepare cards' spell box, as cardconjurer.app builds it: in the colors of the spell's own mana cost (two
+		//halves when it has two colors, and the bars of their hybrid or gold color), over the rules box
+		var spellPart = ['Omen', 'Prepare Spell'].find(name => mainEntry.masks.some(mask => mask.name == name));
+		var spellBoxFrames = () => {
+			var cost = (((print.sibling_faces || [])[1] || {}).mana_cost || '').toUpperCase();
+			var hybrid = cost.includes('/');
+			var spellColors = [...new Set(cost.split('').filter(letter => 'WUBRG'.includes(letter)))];
+			if (!spellColors.length) { spellColors = ['A']; }
+			var part = (letter, name) => {
+				var spellMask = mainEntry.masks.find(item => item.name == name);
+				return spellMask ? copyWithMasks(findEntry(letter, ['Frame']) || mainEntry, [spellMask]) : null;
+			};
+			var parts = spellColors.length == 1 ? [part(spellColors[0], spellPart), hybrid ? part('L', spellPart + ' Type/Title') : null] :
+				[part(hybrid && spellColors.length == 2 ? 'L' : 'M', spellPart + ' Type/Title'), part(spellColors[1], spellPart + ' (Right Half)'), part(spellColors[0], spellPart)];
+			if (spellPart == 'Prepare Spell') { parts.push(part(spellColors[0], 'Prepare Spell Pinline')); }
+			return parts.filter(item => item);
+		};
 		for (var maskName of Object.keys(maskLetters)) {
+			if (maskName == 'Rules' && spellPart) {
+				frames.push(...spellBoxFrames());
+			}
 			var mask = mainEntry.masks.find(item => item.name == maskName);
 			if (!mask) { continue; }
 			var [letterKey, rightKey] = maskLetters[maskName];
@@ -6420,6 +6448,14 @@ async function printedTextOf(print) {
 	if (!match || !match.text) {
 		return null;
 	}
+	//cards in two parts (Omens, Prepare...) can have both parts' text in one, "… // …": this face's is the part most like its
+	//Oracle text
+	if (/ \/\/ /.test(match.text) && print.sibling_faces) {
+		var words = text => new Set((text || '').toLowerCase().match(/[a-z]+/g) || []);
+		var oracleWords = words(print.english_oracle_text || print.oracle_text);
+		var likeness = part => [...words(part)].filter(word => oracleWords.has(word)).length / Math.max(1, words(part).size);
+		match = Object.assign({}, match, {text: match.text.split(/\s*\/\/\s*/).sort((a, b) => likeness(b) - likeness(a))[0]});
+	}
 	//MTGJSON sometimes repeats the front face's text on the back face (e.g. Razorgrass Field, MH3 238):
 	//only trust it when it isn't the other face's text and its card types match Scryfall's for this face
 	var front = side == 'b' ? cards.find(c => c.id == print.id && c.side == 'a') : null;
@@ -6974,8 +7010,9 @@ function importSpecialTextBoxes(print, otherHalf, rulesText) {
 		if (text.type2) { text.type2.text = otherHalf.type_line || ''; }
 		if (text.rules2) { text.rules2.text = formatImportedRulesText(otherHalf.oracle_text); }
 		if (text.pt2) { text.pt2.text = otherHalf.power != undefined ? otherHalf.power + '/' + otherHalf.toughness : ''; }
-		if (print.layout == 'adventure' && text.rules && text.rules2) {
-			//adventure frames: the adventure's text is on the left page, the creature's on the right one
+		if (print.layout == 'adventure' && text.rules && text.rules2 && !card.version.toLowerCase().includes('omen')) {
+			//adventure frames: the adventure's text is on the left page, the creature's on the right one (Omen frames have the
+			//creature's in their rules box)
 			[text.rules.text, text.rules2.text] = [text.rules2.text, text.rules.text];
 		}
 	}
@@ -7105,7 +7142,9 @@ async function changeCardIndex() {
 	var replicatePrint = document.querySelector('#autoFrame').value == 'FromPrint';
 	//split, adventure, aftermath and flip cards show both halves on one card: always start from the first half
 	var otherHalf = null;
-	if (replicatePrint && ['split', 'adventure', 'flip'].includes(cardToImport.layout) && cardToImport.sibling_faces) {
+	//(also into a frame picked by hand that has two halves: cardconjurer.app fills them in too)
+	var twoHalvesFrame = ['flip', 'split', 'fuse', 'aftermath', 'adventure', 'storybook', 'omen', 'room', 'prepare'].some(name => card.version.toLowerCase().includes(name));
+	if ((replicatePrint || twoHalvesFrame) && ['split', 'adventure', 'flip', 'prepare'].includes(cardToImport.layout) && cardToImport.sibling_faces) {
 		cardToImport = Object.assign({}, cardToImport, cardToImport.sibling_faces[0], {face_index: 0});
 		otherHalf = cardToImport.sibling_faces[1];
 	}
@@ -7499,6 +7538,8 @@ async function changeCardIndex() {
 	if (replicatePrint) {
 		importSpecialTextBoxes(cardToImport, otherHalf, rulesText);
 		centerRetroLandText(cardToImport);
+	} else if (otherHalf) {
+		importSpecialTextBoxes(cardToImport, otherHalf, rulesText);
 	}
 	document.querySelector('#text-editor').value = card.text[Object.keys(card.text)[selectedTextIndex]].text;
 	document.querySelector('#text-editor-font-size').value = 0;
