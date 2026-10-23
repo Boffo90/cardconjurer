@@ -1,9 +1,16 @@
 loadFramePacks([
-	{name:'Regular Frames', value:'SagaRegular'},
-	{name:'Universes Beyond Frames', value:'SagaUB'},
 	{name:'Nyx Frames', value:'SagaNyx'},
+	{name:'Regular Frames', value:'SagaRegular'},
+	{name:'Universes Beyond Frames', value:'SagaUBNyx'},
+	{name:'Universes Beyond Regular Frames', value:'SagaUB'},
+
+	{name:'Saga Creatures (Summons)', value: 'disabled'},
+	{name:'Saga Creature Frames', value: 'SagaCreature'},
+	{name:'Universes Beyond Saga Creature Frames', value: 'SagaCreatureUB'},
+
 	{name:'Showcase Frames', value:'disabled'},
 	{name:'Scrolls of Middle-earth (LTR)', value:'SagaLTR'},
+
 	{name:'Addons', value:'disabled'},
 	{name:'Legend Crowns', value:'M15LegendCrowns'},
 	{name:'Legend Crowns (Universes Beyond)', value:'UBLegendCrowns'},
