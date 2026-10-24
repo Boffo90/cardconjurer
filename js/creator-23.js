@@ -390,6 +390,8 @@ loadManaSymbols(['wu', 'wb', 'ub', 'ur', 'br', 'bg', 'rg', 'rw', 'gw', 'gu', '2w
 				 'wup', 'wbp', 'ubp', 'urp', 'brp', 'bgp', 'rgp', 'rwp', 'gwp', 'gup', 'purplew', 'purpleu', 'purpleb', 'purpler', 'purpleg',
 				 '2purple', 'purplep', 'cw', 'cu', 'cb', 'cr', 'cg'], [1.2, 1.2]);
 loadManaSymbols(['bar.png', 'whitebar.png']);
+//the artist's brush (cardconjurer.app's {brush}, in the 8th Edition frames' artist line)
+loadManaSymbols(['brush', 'whitebrush'], [2.85, 2.85]);
 loadManaSymbols(true, ['chaos'], [1.2, 1]);
 //as printed on old cards (manaPrefix): Alpha to Unlimited's, and the classic ones from Revised to Scourge (the skull before its
 //redraw, paler circles)
@@ -4947,10 +4949,19 @@ function writeText(textObject, targetContext) {
 					widestLineWidth = rubyState.widestLineWidth; newLineSpacing = rubyState.newLineSpacing;
 					wordToWrite = null;
 				} else if (possibleCode.includes('conditionalcolor')) {
+					//(cardconjurer.app's mask rules: "Black_Frame*Frame*!Right_Half" is a black frame with a "Frame" mask and no
+					//"Right Half" one; a frame without masks always counts)
 					var codeParams = possibleCode.split(":");
 					for (var eligibleFrame of codeParams[1].split(",")) {
-						eligibleFrame = eligibleFrame.replace(/_/g, " ");
-						if (card.frames.findIndex(element => element.name.toLowerCase().includes(eligibleFrame)) != -1) {
+						var maskRules = eligibleFrame.toLowerCase().replace(/_/g, " ").split("*");
+						var frameName = maskRules.shift();
+						var wantedMasks = maskRules.filter(rule => rule && !rule.startsWith("!"));
+						var unwantedMasks = maskRules.filter(rule => rule.startsWith("!")).map(rule => rule.substring(1));
+						if (card.frames.some(frame => {
+							var maskNames = (frame.masks || []).map(mask => mask.name.toLowerCase());
+							return frame.name.toLowerCase().includes(frameName) && (!maskNames.length ||
+								(wantedMasks.every(wanted => maskNames.some(mask => mask.includes(wanted))) && !unwantedMasks.some(unwanted => maskNames.some(mask => mask.includes(unwanted)))));
+						})) {
 							textColor = codeParams[2];
 							lineContext.fillStyle = textColor;
 						}
@@ -5086,6 +5097,9 @@ function writeText(textObject, targetContext) {
 					if (textObject.manaPrefix && (getManaSymbol(textObject.manaPrefix + possibleCode) != undefined || getManaSymbol(textObject.manaPrefix + possibleCode.split('').reverse().join('')) != undefined)) {
 						manaSymbol = getManaSymbol(textObject.manaPrefix + possibleCode) || getManaSymbol(textObject.manaPrefix + possibleCode.split('').reverse().join(''));
 					} else {
+						if (possibleCode == 'brush' && textColor == 'white') {
+							possibleCode = 'whitebrush';
+						}
 						manaSymbol = getManaSymbol(possibleCode) || getManaSymbol(possibleCode.split('').reverse().join(''));
 					}
 
@@ -6313,13 +6327,28 @@ function artistEdited(value) {
 	document.querySelector('#info-artist').value = value;
 	bottomInfoEdited();
 }
+//The collector line's star and dot, only in its text: codes have stars of their own (the 8th Edition frames'
+//"{conditionalcolor:Black_Frame*Frame*!Right_Half,...}"), which became dots and broke the code
+function outsideCodes(text) {
+	return (text || '').replace(/\{[^}]*\}/g, '');
+}
+function replaceOutsideCodes(text, from, to) {
+	var replaced = false;
+	return text.replace(/\{[^}]*\}|[^{]+/g, part => {
+		if (replaced || part.startsWith('{') || !part.includes(from)) {
+			return part;
+		}
+		replaced = true;
+		return part.replace(from, to);
+	});
+}
 function toggleStarDot() {
 	for (var key of Object.keys(card.bottomInfo)) {
 		var text = card.bottomInfo[key].text
-		if (text.includes('*')) {
-			card.bottomInfo[key].text = text.replace('*', ' \u2022 ');
+		if (outsideCodes(text).includes('*')) {
+			card.bottomInfo[key].text = replaceOutsideCodes(text, '*', ' \u2022 ');
 		} else {
-			card.bottomInfo[key].text = text.replace(' \u2022 ', '*');
+			card.bottomInfo[key].text = replaceOutsideCodes(text, ' \u2022 ', '*');
 		}
 	}
 	defaultCollector.starDot = !defaultCollector.starDot;
@@ -6850,7 +6879,7 @@ function applyLearnedPrintedText(print, replicatePrint) {
 }
 //The collector line's separator: a star (foil) or a dot, whichever the print has (see toggleStarDot)
 function setCollectorStar(star) {
-	var texts = Object.values(card.bottomInfo || {}).map(textObject => textObject.text || '');
+	var texts = Object.values(card.bottomInfo || {}).map(textObject => outsideCodes(textObject.text));
 	var hasDot = texts.some(text => text.includes(' • '));
 	var hasStar = !hasDot && texts.some(text => text.includes('*'));
 	if ((star && hasDot) || (!star && hasStar)) {
