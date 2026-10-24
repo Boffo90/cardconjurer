@@ -1019,17 +1019,33 @@ function autoFrame() {
 var autoFrameUnusablePacks = []; //packs whose frames couldn't be matched automatically (they use other frame names)
 //Showcase frame of each set (set code -> frame pack); a function picks between several showcases of the same set
 var autoFrameShowcasePacks = {
-	otj: 'Wanted', pip: 'Pipboy', mkm: 'Dossier', ltr: 'Scroll', who: 'TARDIS', one: 'OilSlick', dmu: 'DMUStainedGlass',
+	otj: 'Wanted', pip: 'Pipboy', mkm: print => (print.promo_types || []).includes('magnified') ? 'ShowcaseMagnified' : 'Dossier', ltr: 'Scroll', who: 'TARDIS', one: 'OilSlick', dmu: 'DMUStainedGlass',
 	snc: 'SNCArtDeco', vow: 'Fang', mid: 'Equinox', afr: 'DNDModule', mh2: 'MH2', cmr: 'CommanderLegends', znr: 'ZendikarRising',
 	m21: 'M21', thb: 'M15NyxShowcase',
+	//(the showcases of cardconjurer.app's frames, from Scryfall's showcase prints of each set)
+	tmt: 'SewerTMT', ecl: 'FableECL', tla: 'Elemental', spm: 'ShowcasePanel', blb: 'Woodland', acr: 'MemoryCorridor', lci: 'IxalanLegends1',
+	tdm: print => print.border_color == 'borderless' ? null : 'Draconic', //(the borderless ones are Ghostfire, one frame for all colors)
+	dsk: print => print.border_color == 'black' ? 'Paranormal' : null,
 	neo: print => (print.english_type_line || print.type_line || '').includes('Samurai') ? 'NeoSamurai' : 'NeoNinja',
 	khm: print => (print.english_type_line || print.type_line || '').includes('Legendary') ? 'Kaldheim-2' : 'KaldheimNonleg'
 };
 //Sets where every card uses a special frame, showcase or not
 var autoFrameSetPacks = {
 	wot: 'EnchantingTales', otp: 'BreakingNews', big: 'Vault', dbl: 'DoubleFeature', zne: 'ExpeditionZNR-1', exp: 'ExpeditionBFZ-1', mp2: 'Invocation', mps: 'Invention',
-	sta: print => print.lang == 'ja' ? 'MysticalArchiveJP' : 'MysticalArchive'
+	sta: print => print.lang == 'ja' ? 'MysticalArchiveJP' : 'MysticalArchive',
+	soa: 'MysticalArchiveSOA', eos: 'BorderlessStellarSights'
 };
+//Treatments Scryfall names on the print (its promo types), in whichever set they are
+function autoFramePromoPack(print) {
+	var promos = print.promo_types || [];
+	if (promos.includes('japanshowcase')) {
+		return 'JapanShowcase';
+	}
+	if (promos.includes('neonink') && print.set == 'tla') {
+		return 'NeonInk';
+	}
+	return null;
+}
 //Frame packs that share the bottom of the M15 frame, so the M15 holo stamp fits them
 var autoFrameM15BottomPacks = ['M15TransformFront', 'M15TransformBack', 'ModalRegular', 'ModalExtended', 'Adventure', 'Class', 'Case', 'M15Mutate', 'Prototype', 'Levelers'];
 //Picks how to replicate an imported print: a frame pack built from its frames ("pack"), or one of the auto frame styles above ("style")
@@ -1100,7 +1116,7 @@ function autoFrameStyleFromPrint(print) {
 		return {style: null, notice: 'Auto frame: ' + layout.replace(/_/g, ' ') + ' cards are not supported, so the frame was left as it is. You can pick it in the Frame tab.'};
 	} else if (!['1993', '1997', '2003'].includes(print.frame)) {
 		//special frames of a set (showcases, Mystical Archive, Expeditions...)
-		var setPack = autoFrameSetPacks[print.set] || (effects.includes('showcase') ? autoFrameShowcasePacks[print.set] : null);
+		var setPack = autoFrameSetPacks[print.set] || autoFramePromoPack(print) || (effects.includes('showcase') ? autoFrameShowcasePacks[print.set] : null);
 		if (typeof setPack == 'function') {
 			setPack = setPack(print);
 		}
