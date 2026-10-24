@@ -2,6 +2,8 @@
 var masks = [{src:'/img/frames/vault/masks/maskPinlines.png', name:'Pinlines'}, {src:'/img/frames/vault/masks/maskTitle.png', name:'Title'}, {src:'/img/frames/vault/masks/maskType.png', name:'Type'}, {src:'/img/frames/vault/masks/maskRules.png', name:'Rules'}, {src:'/img/frames/vault/masks/maskTextBoxes.png', name:'Text Boxes'}, {src:'/img/frames/vault/masks/maskFrame.png', name:'Frame'}, {src:'/img/frames/vault/masks/maskBorderless.png', name:'Borderless'}, {src:'/img/frames/vault/masks/maskBottomFrame.png', name:'Bottom Frame'}, {src:'/img/frames/vault/masks/maskBottomFrameNoBorder.png', name:'Bottom Frame No Borer'}, {src:'/img/frames/vault/masks/maskNoBorder.png', name:'No Border'}, {src:'/img/frames/vault/masks/maskBorder.png', name:'Border'}];
 var crownBounds = {x:-88/2010, y:-80/2814, width:2187/2010, height:2975/2814};
 var stampBounds = {x:835/2010, y:2507/2814, width:341/2010, height:151/2814};
+//(the power/toughness box is a small image: centered on the power/toughness text, at its own size)
+var ptBounds = {x:1556/2010, y:2495/2814, width:347/2010, height:172/2814};
 //defines available frames
 availableFrames = [
 	{name:'White Frame', src:'/img/frames/vault/w.png', masks:masks},
@@ -13,14 +15,14 @@ availableFrames = [
 	{name:'Artifact Frame', src:'/img/frames/vault/a.png', masks:masks},
 	{name:'Land Frame', src:'/img/frames/vault/l.png', masks:masks},
 
-	{name:'White Power/Toughness', src:'/img/frames/vault/pt/w.png'},
-	{name:'Blue Power/Toughness', src:'/img/frames/vault/pt/u.png'},
-	{name:'Black Power/Toughness', src:'/img/frames/vault/pt/b.png'},
-	{name:'Red Power/Toughness', src:'/img/frames/vault/pt/r.png'},
-	{name:'Green Power/Toughness', src:'/img/frames/vault/pt/g.png'},
-	{name:'Multicolored Power/Toughness', src:'/img/frames/vault/pt/m.png'},
-	{name:'Artifact Power/Toughness', src:'/img/frames/vault/pt/a.png'},
-	{name:'Land Power/Toughness', src:'/img/frames/vault/pt/l.png'},
+	{name:'White Power/Toughness', src:'/img/frames/vault/pt/w.png', bounds:ptBounds},
+	{name:'Blue Power/Toughness', src:'/img/frames/vault/pt/u.png', bounds:ptBounds},
+	{name:'Black Power/Toughness', src:'/img/frames/vault/pt/b.png', bounds:ptBounds},
+	{name:'Red Power/Toughness', src:'/img/frames/vault/pt/r.png', bounds:ptBounds},
+	{name:'Green Power/Toughness', src:'/img/frames/vault/pt/g.png', bounds:ptBounds},
+	{name:'Multicolored Power/Toughness', src:'/img/frames/vault/pt/m.png', bounds:ptBounds},
+	{name:'Artifact Power/Toughness', src:'/img/frames/vault/pt/a.png', bounds:ptBounds},
+	{name:'Land Power/Toughness', src:'/img/frames/vault/pt/l.png', bounds:ptBounds},
 
 	{name:'White Legendary Crown', src:'/img/frames/vault/crown/w.png', bounds:crownBounds},
 	{name:'Blue Legendary Crown', src:'/img/frames/vault/crown/u.png', bounds:crownBounds},
