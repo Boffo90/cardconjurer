@@ -4877,6 +4877,9 @@ function writeText(textObject, targetContext) {
 					newLineSpacing = textSize * ('paragraphSpacing' in textObject ? textObject.paragraphSpacing : 0.35);
 				} else if (possibleCode == 'bullet' || possibleCode == '•') {
 					wordToWrite = '•';
+				} else if (possibleCode == 'brush' && textFont.startsWith('matrix')) {
+					//the Matrix fonts have the brush as printed (long and thin, ￮): cardconjurer.app's image is thicker and bigger
+					wordToWrite = '￮';
 				} else if (possibleCode == 'lns' || possibleCode == 'linenospace') {
 					newLine = true;
 				} else if (possibleCode == 'bar') {
