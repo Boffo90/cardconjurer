@@ -9125,10 +9125,19 @@ if (!localStorage.getItem('enableCollectorInfo')) {
 } else {
 	document.querySelector('#enableCollectorInfo').checked = (localStorage.getItem('enableCollectorInfo') == 'true');
 }
-if (!localStorage.getItem('autoFrame')) {
-	localStorage.setItem('autoFrame', 'false');
-} else {
-	document.querySelector('#autoFrame').value = localStorage.getItem('autoFrame');
+//Imports take the frame of their print unless asked otherwise: also once for those who had it disabled, the old default
+//(a choice made after this stays)
+if (!localStorage.getItem('autoFrame') || (localStorage.getItem('autoFrame') == 'false' && !localStorage.getItem('autoFrameFromPrintDefault'))) {
+	localStorage.setItem('autoFrame', 'FromPrint');
+	localStorage.setItem('autoLoadFrameVersion', 'true');
+	document.querySelector('#autoLoadFrameVersion').checked = true;
+}
+localStorage.setItem('autoFrameFromPrintDefault', 'true');
+document.querySelector('#autoFrame').value = localStorage.getItem('autoFrame');
+if (!document.querySelector('#autoFrame').value) {
+	//a saved frame that isn't in the list anymore
+	document.querySelector('#autoFrame').value = 'FromPrint';
+	localStorage.setItem('autoFrame', 'FromPrint');
 }
 if (!localStorage.getItem('autoFit')) {
 	localStorage.setItem('autoFit', 'true');

@@ -123,6 +123,19 @@ document.addEventListener('DOMContentLoaded', function() {
 	document.body.dispatchEvent(new Event('doCreate'));
 })
 
+//The creator's scripts run only once per page: loaded a second time (the menu's Card Creator, or back from another page) they
+//fail ("already declared") and the creator is left with its defaults, like the auto frame disabled. It's kept when it's
+//already there, and comes back with a reload otherwise
+document.addEventListener('htmx:beforeRequest', function(event) {
+	var path = event.detail.requestConfig ? event.detail.requestConfig.path : '';
+	if (path.startsWith('creator/') && typeof importCard == 'function') {
+		event.preventDefault();
+		if (!document.querySelector('#previewCanvas')) {
+			location.reload();
+		}
+	}
+})
+
 document.onkeyup = function(e) {
 	if (document.activeElement === document.getElementById('text-editor')) {
 		if (e.ctrlKey && e.which == 73) {
