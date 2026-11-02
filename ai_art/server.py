@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import threading
+import traceback
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections import deque
@@ -187,6 +188,8 @@ def printed_bands(brightness, groups, colors, kept):
     rows = np.where(region.any(axis=1))[0]
     top, bottom = rows[0], rows[-1] + 1
     columns = region[top:bottom].mean(axis=0) > 0.5
+    if not columns.any():
+        return np.zeros_like(region), None  # the frame's two boxes aren't bands across it: nothing to measure
     # each row's brightness behind its text (the text's dark, so the brighter part)
     profile = np.percentile(brightness[top:bottom][:, columns], 70, axis=1)
     frame_light = light[top:bottom].sum(axis=1) > dark[top:bottom].sum(axis=1)
@@ -206,10 +209,13 @@ def printed_bands(brightness, groups, colors, kept):
     piece = 12
     column_numbers = np.where(columns)[0]
     for line in moved:
+        rows_over, rows_under = brightness[top + max(0, line - side):top + line - 2], brightness[top + line + 2:top + line + side]
+        if not len(rows_over) or not len(rows_under):
+            continue  # a line at the very edge of the card: nothing on one of its sides
         for start in range(0, len(column_numbers) - piece, piece):
             span = column_numbers[start:start + piece]
-            over = np.percentile(brightness[top + max(0, line - side):top + line - 2][:, span], 70)
-            under = np.percentile(brightness[top + line + 2:top + line + side][:, span], 70)
+            over = np.percentile(rows_over[:, span], 70)
+            under = np.percentile(rows_under[:, span], 70)
             light_side, dark_side = (over, under) if is_light[line - 1] else (under, over)
             if light_side > 40:
                 darkenings.append(dark_side / light_side)
@@ -469,6 +475,8 @@ class Handler(BaseHTTPRequestHandler):
             web = lambda file: "/" + os.path.relpath(file, ROOT).replace(os.sep, "/")
             self.answer(200, {"path": web(path), "popout": web(popout_path) if os.path.exists(popout_path) else None})
         except Exception as error:
+            traceback.print_exc()  # (in ai_art/server.log)
+            sys.stderr.flush()
             self.answer(500, {"error": str(error)})
 
     def log_message(self, format, *args):
